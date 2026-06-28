@@ -1,0 +1,50 @@
+{
+  "name": "no-comments",
+  "version": "0.1.0",
+  "private": true,
+  "description": "No Comment`s is a small Discord-like app for friends with chat, profiles, calls, and screen sharing.",
+  "type": "module",
+  "main": "electron/main.mjs",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "desktop": "electron .",
+    "dist:win": "electron-builder --win nsis portable"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "socket.io": "^4.7.5"
+  },
+  "devDependencies": {
+    "electron": "^31.7.7",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "local.no.comments",
+    "productName": "No Comment`s",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "electron/**/*",
+      "public/**/*",
+      "server.js",
+      "docker-compose.yml",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true
+    }
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

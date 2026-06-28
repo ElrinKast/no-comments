@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>No Comment`s</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <aside class="sidebar" aria-label="Профиль и друзья">
+        <section class="brand">
+          <div class="brand-mark">FV</div>
+          <div>
+            <h1>No Comment`s</h1>
+            <p>Комната для своих</p>
+          </div>
+        </section>
+
+        <form id="joinForm" class="join-panel">
+          <label>
+            Имя
+            <input id="nameInput" name="name" autocomplete="nickname" maxlength="28" required />
+          </label>
+          <label>
+            Статус
+            <input id="statusInput" name="status" maxlength="64" />
+          </label>
+          <label>
+            Комната
+            <input id="roomInput" name="room" maxlength="40" required />
+          </label>
+          <label>
+            Код
+            <input id="inviteInput" name="invite" autocomplete="off" />
+          </label>
+          <div class="color-row">
+            <button class="swatch active" type="button" data-color="#4f8cff" aria-label="Синий"></button>
+            <button class="swatch" type="button" data-color="#22a06b" aria-label="Зеленый"></button>
+            <button class="swatch" type="button" data-color="#e25555" aria-label="Красный"></button>
+            <button class="swatch" type="button" data-color="#f0a43c" aria-label="Оранжевый"></button>
+          </div>
+          <button class="primary-action" type="submit">Войти</button>
+          <p id="joinError" class="error-text" role="alert"></p>
+        </form>
+
+        <section class="people-panel">
+          <div class="section-title">
+            <h2>Онлайн</h2>
+            <span id="onlineCount">0</span>
+          </div>
+          <ul id="peopleList" class="people-list"></ul>
+        </section>
+      </aside>
+
+      <section class="workspace">
+        <header class="topbar">
+          <div>
+            <p id="roomLabel" class="eyebrow"># lounge</p>
+            <h2>Общий канал</h2>
+          </div>
+          <div class="call-actions">
+            <button id="muteButton" class="icon-button" type="button" title="Микрофон" disabled>mic</button>
+            <button id="screenButton" class="icon-button" type="button" title="Демонстрация экрана" disabled>screen</button>
+            <button id="callButton" class="call-button" type="button" disabled>Позвонить</button>
+          </div>
+        </header>
+
+        <section class="stage">
+          <div id="videoGrid" class="video-grid">
+            <div class="empty-call">
+              <strong>Звонок пока пуст</strong>
+              <span>Войдите в комнату и нажмите “Позвонить”.</span>
+            </div>
+          </div>
+        </section>
+
+        <section class="chat-panel">
+          <div id="messages" class="messages" aria-live="polite"></div>
+          <form id="messageForm" class="message-form">
+            <input id="messageInput" type="text" maxlength="1200" placeholder="Сообщение друзьям..." disabled />
+            <button type="submit" disabled>Отправить</button>
+          </form>
+        </section>
+      </section>
+    </main>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>

@@ -1,0 +1,29 @@
+services:
+  no-comments:
+    image: node:22-alpine
+    working_dir: /app
+    command: sh -c "corepack enable && pnpm install --prod && pnpm start"
+    ports:
+      - "3000:3000"
+    environment:
+      PORT: "3000"
+      FRIENDS_INVITE_CODE: "${FRIENDS_INVITE_CODE:-}"
+      TURN_URL: "${TURN_URL:-}"
+      TURN_USER: "${TURN_USER:-}"
+      TURN_PASSWORD: "${TURN_PASSWORD:-}"
+    volumes:
+      - ./:/app
+    restart: unless-stopped
+
+  turn:
+    image: coturn/coturn:4.6
+    network_mode: host
+    command:
+      - -n
+      - --log-file=stdout
+      - --fingerprint
+      - --lt-cred-mech
+      - --user=${TURN_USER:-no-comments}:${TURN_PASSWORD:-change-me}
+      - --realm=${TURN_REALM:-no-comments.local}
+      - --no-cli
+    restart: unless-stopped

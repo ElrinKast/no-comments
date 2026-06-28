@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>No Comment`s</title>
+    <link rel="stylesheet" href="./connect.css" />
+  </head>
+  <body>
+    <main class="connect-shell">
+      <section class="connect-panel">
+        <div class="brand-mark">NC</div>
+        <h1>No Comment`s</h1>
+        <p>Подключитесь к серверу друзей или запустите локальную комнату для теста.</p>
+
+        <form id="remoteForm">
+          <label>
+            Адрес сервера
+            <input id="serverUrl" type="url" placeholder="https://chat.example.ru" autocomplete="url" />
+          </label>
+          <button type="submit">Подключиться</button>
+        </form>
+
+        <button id="localButton" class="secondary" type="button">Запустить локально</button>
+        <p id="errorText" class="error" role="alert"></p>
+      </section>
+    </main>
+    <script src="./connect.js"></script>
+  </body>
+</html>
