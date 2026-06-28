@@ -28,6 +28,7 @@ const els = {
   messages: document.querySelector("#messages"),
   callButton: document.querySelector("#callButton"),
   muteButton: document.querySelector("#muteButton"),
+  cameraButton: document.querySelector("#cameraButton"),
   screenButton: document.querySelector("#screenButton"),
   videoGrid: document.querySelector("#videoGrid"),
   swatches: document.querySelectorAll(".swatch")
@@ -49,11 +50,13 @@ const state = {
   screenStream: null,
   inCall: false,
   muted: false,
+  cameraEnabled: false,
   iceServers: [{ urls: "stun:stun.l.google.com:19302" }]
 };
 
 loadConfig();
 setupScreenShareSupport();
+updateCameraButton();
 boot();
 
 els.loginTab.addEventListener("click", () => setAuthMode("login"));
@@ -145,6 +148,10 @@ els.muteButton.addEventListener("click", () => {
   }
   els.muteButton.classList.toggle("active", state.muted);
   els.muteButton.textContent = state.muted ? "muted" : "mic";
+});
+
+els.cameraButton.addEventListener("click", () => {
+  toggleCamera();
 });
 
 els.screenButton.addEventListener("click", () => {
@@ -309,10 +316,13 @@ async function joinCall() {
     const media = await getCallMedia();
     state.localStream = media.stream;
     state.inCall = true;
+    state.cameraEnabled = media.video;
+    setLocalCameraEnabled(state.cameraEnabled);
     addVideoTile(state.selfId, state.localStream, media.video ? "Вы" : "Вы · только голос");
     socket.emit("call:join");
     els.callButton.textContent = "Выйти";
     els.callButton.classList.add("active");
+    updateCameraButton();
     if (!media.video) addNotice("Камера недоступна, вы вошли в звонок с микрофоном.");
 
     for (const user of state.users.values()) {
@@ -351,6 +361,53 @@ function mediaErrorMessage(error) {
   return "Не получилось получить доступ к микрофону или камере.";
 }
 
+async function toggleCamera() {
+  if (!state.inCall) return;
+
+  const cameraTrack = getCameraTrack();
+  if (!cameraTrack) {
+    addNotice("Камера недоступна на этом устройстве или не была разрешена браузером.");
+    updateCameraButton();
+    return;
+  }
+
+  state.cameraEnabled = !state.cameraEnabled;
+  setLocalCameraEnabled(state.cameraEnabled);
+  if (!state.screenStream) {
+    await setOutboundVideoTrack(state.cameraEnabled ? cameraTrack : null);
+  }
+  updateLocalVideoTile();
+  updateCameraButton();
+}
+
+function getCameraTrack() {
+  return state.localStream?.getVideoTracks()[0] || null;
+}
+
+function setLocalCameraEnabled(enabled) {
+  const cameraTrack = getCameraTrack();
+  if (cameraTrack) cameraTrack.enabled = enabled;
+}
+
+function updateCameraButton() {
+  const hasCamera = Boolean(getCameraTrack());
+  els.cameraButton.disabled = !state.inCall || !hasCamera;
+  els.cameraButton.classList.toggle("active", state.cameraEnabled && hasCamera);
+  els.cameraButton.textContent = state.cameraEnabled && hasCamera ? "cam" : "off";
+  els.cameraButton.title = state.cameraEnabled && hasCamera ? "Выключить камеру" : "Включить камеру";
+}
+
+function updateLocalVideoTile() {
+  if (!state.inCall) return;
+  if (state.screenStream) {
+    addVideoTile(state.selfId, state.screenStream, "Вы показываете экран");
+    return;
+  }
+
+  const label = getCameraTrack() && state.cameraEnabled ? "Вы" : "Вы · только голос";
+  addVideoTile(state.selfId, state.localStream, label);
+}
+
 function leaveCall() {
   if (!state.inCall && !state.localStream) return;
 
@@ -360,10 +417,12 @@ function leaveCall() {
   state.localStream = null;
   state.inCall = false;
   state.muted = false;
+  state.cameraEnabled = false;
   els.callButton.textContent = "Позвонить";
   els.callButton.classList.remove("active");
   els.muteButton.classList.remove("active");
   els.muteButton.textContent = "mic";
+  updateCameraButton();
 
   for (const id of [...state.peers.keys()]) removePeer(id);
   document.querySelector(`[data-video-id="${CSS.escape(state.selfId)}"]`)?.remove();
@@ -383,7 +442,7 @@ async function startScreenShare() {
   try {
     state.screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
     const screenTrack = state.screenStream.getVideoTracks()[0];
-    await setOutboundVideoTrack(screenTrack, state.screenStream);
+    await setOutboundVideoTrack(screenTrack);
     addVideoTile(state.selfId, state.screenStream, "Вы показываете экран");
     els.screenButton.classList.add("active");
     els.screenButton.textContent = "stop";
@@ -426,11 +485,11 @@ async function stopScreenShare(options = {}) {
   state.screenStream.getTracks().forEach((track) => track.stop());
   state.screenStream = null;
   const cameraTrack = state.localStream?.getVideoTracks()[0];
-  if (cameraTrack) {
-    if (renegotiate) await setOutboundVideoTrack(cameraTrack, state.localStream);
+  if (cameraTrack && state.cameraEnabled) {
+    if (renegotiate) await setOutboundVideoTrack(cameraTrack);
     addVideoTile(state.selfId, state.localStream, "Вы");
   } else {
-    if (renegotiate) await clearOutboundVideoTrack();
+    if (renegotiate) await setOutboundVideoTrack(null);
     addVideoTile(state.selfId, state.localStream, "Вы · только голос");
   }
   els.screenButton.classList.remove("active");
@@ -438,44 +497,63 @@ async function stopScreenShare(options = {}) {
   socket?.emit("call:screen", false);
 }
 
-async function setOutboundVideoTrack(track, stream) {
-  const renegotiations = [];
+async function setOutboundVideoTrack(track) {
+  const replacements = [];
   for (const [id, peer] of state.peers) {
-    const sender = peer.getSenders().find((item) => item.track?.kind === "video");
+    const sender = getVideoSender(peer);
     if (sender) {
-      renegotiations.push(sender.replaceTrack(track));
+      replacements.push(sender.replaceTrack(track));
     } else {
-      peer.addTrack(track, stream);
-      renegotiations.push(renegotiatePeer(id, peer));
+      const transceiver = peer.addTransceiver("video", { direction: "sendrecv" });
+      peer._videoSender = transceiver.sender;
+      replacements.push(transceiver.sender.replaceTrack(track));
+      if (peer._shouldOffer) replacements.push(renegotiatePeer(id, peer));
     }
   }
-  await Promise.allSettled(renegotiations);
-}
-
-async function clearOutboundVideoTrack() {
-  const renegotiations = [];
-  for (const [id, peer] of state.peers) {
-    const senders = peer.getSenders().filter((sender) => sender.track?.kind === "video");
-    for (const sender of senders) {
-      peer.removeTrack(sender);
-      renegotiations.push(renegotiatePeer(id, peer));
-    }
-  }
-  await Promise.allSettled(renegotiations);
+  await Promise.allSettled(replacements);
 }
 
 async function renegotiatePeer(id, peer) {
-  if (peer.signalingState !== "stable") return;
-  const offer = await peer.createOffer();
-  await peer.setLocalDescription(offer);
-  socket.emit("signal:offer", { to: id, description: peer.localDescription });
+  if (peer.signalingState !== "stable" || peer._makingOffer) return;
+  try {
+    peer._makingOffer = true;
+    const offer = await peer.createOffer();
+    await peer.setLocalDescription(offer);
+    socket.emit("signal:offer", { to: id, description: peer.localDescription });
+  } finally {
+    peer._makingOffer = false;
+  }
 }
 
-function addOutboundTracks(peer) {
-  state.localStream?.getAudioTracks().forEach((track) => peer.addTrack(track, state.localStream));
+function addOutboundTransceivers(peer) {
+  const audioTrack = state.localStream?.getAudioTracks()[0] || null;
+  const videoTrack = getCurrentVideoTrack();
 
-  const videoStream = state.screenStream || state.localStream;
-  videoStream?.getVideoTracks().forEach((track) => peer.addTrack(track, videoStream));
+  const audioTransceiver = audioTrack
+    ? peer.addTransceiver(audioTrack, { direction: "sendrecv", streams: [state.localStream] })
+    : peer.addTransceiver("audio", { direction: "sendrecv" });
+  const videoTransceiver = videoTrack
+    ? peer.addTransceiver(videoTrack, { direction: "sendrecv", streams: [getCurrentVideoStream()] })
+    : peer.addTransceiver("video", { direction: "sendrecv" });
+
+  peer._audioSender = audioTransceiver.sender;
+  peer._videoSender = videoTransceiver.sender;
+}
+
+function getCurrentVideoTrack() {
+  if (state.screenStream) return state.screenStream.getVideoTracks()[0] || null;
+  const cameraTrack = getCameraTrack();
+  return cameraTrack && state.cameraEnabled ? cameraTrack : null;
+}
+
+function getCurrentVideoStream() {
+  return state.screenStream || state.localStream;
+}
+
+function getVideoSender(peer) {
+  if (peer._videoSender) return peer._videoSender;
+  peer._videoSender = peer.getSenders().find((sender) => sender.track?.kind === "video") || null;
+  return peer._videoSender;
 }
 
 function shouldInitiatePeer(id) {
@@ -486,8 +564,11 @@ function createPeer(id, politeOffer) {
   if (state.peers.has(id)) return state.peers.get(id);
 
   const peer = new RTCPeerConnection({ iceServers: state.iceServers });
+  peer._shouldOffer = politeOffer;
+  peer._makingOffer = false;
+  peer._ignoreOffer = false;
   state.peers.set(id, peer);
-  addOutboundTracks(peer);
+  addOutboundTransceivers(peer);
 
   peer.onicecandidate = (event) => {
     if (event.candidate) socket.emit("signal:ice", { to: id, candidate: event.candidate });
@@ -522,7 +603,11 @@ function createPeer(id, politeOffer) {
 }
 
 async function handleOffer({ from, description }) {
-  const peer = createPeer(from, false);
+  const peer = createPeer(from, shouldInitiatePeer(from));
+  const offerCollision = peer._makingOffer || peer.signalingState !== "stable";
+  peer._ignoreOffer = offerCollision && peer._shouldOffer;
+  if (peer._ignoreOffer) return;
+
   await peer.setRemoteDescription(description);
   const answer = await peer.createAnswer();
   await peer.setLocalDescription(answer);
@@ -536,7 +621,12 @@ async function handleAnswer({ from, description }) {
 
 async function handleIce({ from, candidate }) {
   const peer = state.peers.get(from);
-  if (peer && candidate) await peer.addIceCandidate(candidate);
+  if (!peer || !candidate || peer._ignoreOffer) return;
+  try {
+    await peer.addIceCandidate(candidate);
+  } catch (error) {
+    if (!peer._ignoreOffer) throw error;
+  }
 }
 
 function removePeer(id) {
@@ -582,7 +672,7 @@ function syncRemoteVideoTiles(users) {
 function addVideoTile(id, stream, label) {
   document.querySelector(".empty-call")?.remove();
   let tile = document.querySelector(`[data-video-id="${CSS.escape(id)}"]`);
-  const hasVideo = stream?.getVideoTracks().some((track) => track.readyState === "live") || false;
+  const hasVideo = hasDisplayableVideo(stream);
 
   if (!tile) {
     tile = document.createElement("article");
@@ -596,8 +686,15 @@ function addVideoTile(id, stream, label) {
   video.srcObject = stream;
   video.muted = id === state.selfId;
   video.hidden = !hasVideo;
+  video.play?.().catch(() => {});
   tile.querySelector(".audio-only-tile").hidden = hasVideo;
   tile.querySelector(".video-label").textContent = label;
+}
+
+function hasDisplayableVideo(stream) {
+  return stream?.getVideoTracks().some((track) => {
+    return track.readyState === "live" && track.enabled !== false && !track.muted;
+  }) || false;
 }
 
 function renderVideoEmptyState() {

@@ -384,6 +384,11 @@ input:focus {
   background: var(--success);
 }
 
+.icon-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
 .call-button.active {
   background: var(--danger);
 }
