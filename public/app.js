@@ -228,6 +228,7 @@ function connectSocket() {
   socket.on("presence:update", (users) => {
     state.users = new Map(users.map((user) => [user.id, user]));
     renderPeople(users);
+    syncRemoteVideoTiles(users);
 
     if (state.inCall) {
       for (const user of users) {
@@ -352,7 +353,7 @@ function leaveCall() {
   if (!state.inCall && !state.localStream) return;
 
   socket?.emit("call:leave");
-  stopScreenShare();
+  stopScreenShare({ renegotiate: false });
   state.localStream?.getTracks().forEach((track) => track.stop());
   state.localStream = null;
   state.inCall = false;
@@ -368,14 +369,18 @@ function leaveCall() {
 }
 
 async function startScreenShare() {
-  if (!state.inCall) return;
+  if (!state.inCall) {
+    addNotice("Сначала войдите в звонок, потом включите демонстрацию экрана.");
+    return;
+  }
 
   try {
-    state.screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+    state.screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
     const screenTrack = state.screenStream.getVideoTracks()[0];
-    replaceVideoTrack(screenTrack);
+    await setOutboundVideoTrack(screenTrack, state.screenStream);
     addVideoTile(state.selfId, state.screenStream, "Вы показываете экран");
     els.screenButton.classList.add("active");
+    els.screenButton.textContent = "stop";
     socket.emit("call:screen", true);
     screenTrack.addEventListener("ended", stopScreenShare, { once: true });
   } catch {
@@ -383,25 +388,63 @@ async function startScreenShare() {
   }
 }
 
-function stopScreenShare() {
+async function stopScreenShare(options = {}) {
+  const { renegotiate = true } = options;
   if (!state.screenStream) return;
 
   state.screenStream.getTracks().forEach((track) => track.stop());
   state.screenStream = null;
   const cameraTrack = state.localStream?.getVideoTracks()[0];
   if (cameraTrack) {
-    replaceVideoTrack(cameraTrack);
+    if (renegotiate) await setOutboundVideoTrack(cameraTrack, state.localStream);
     addVideoTile(state.selfId, state.localStream, "Вы");
+  } else {
+    if (renegotiate) await clearOutboundVideoTrack();
+    addVideoTile(state.selfId, state.localStream, "Вы · только голос");
   }
   els.screenButton.classList.remove("active");
+  els.screenButton.textContent = "screen";
   socket?.emit("call:screen", false);
 }
 
-function replaceVideoTrack(track) {
-  for (const peer of state.peers.values()) {
+async function setOutboundVideoTrack(track, stream) {
+  const renegotiations = [];
+  for (const [id, peer] of state.peers) {
     const sender = peer.getSenders().find((item) => item.track?.kind === "video");
-    sender?.replaceTrack(track);
+    if (sender) {
+      renegotiations.push(sender.replaceTrack(track));
+    } else {
+      peer.addTrack(track, stream);
+      renegotiations.push(renegotiatePeer(id, peer));
+    }
   }
+  await Promise.allSettled(renegotiations);
+}
+
+async function clearOutboundVideoTrack() {
+  const renegotiations = [];
+  for (const [id, peer] of state.peers) {
+    const senders = peer.getSenders().filter((sender) => sender.track?.kind === "video");
+    for (const sender of senders) {
+      peer.removeTrack(sender);
+      renegotiations.push(renegotiatePeer(id, peer));
+    }
+  }
+  await Promise.allSettled(renegotiations);
+}
+
+async function renegotiatePeer(id, peer) {
+  if (peer.signalingState !== "stable") return;
+  const offer = await peer.createOffer();
+  await peer.setLocalDescription(offer);
+  socket.emit("signal:offer", { to: id, description: peer.localDescription });
+}
+
+function addOutboundTracks(peer) {
+  state.localStream?.getAudioTracks().forEach((track) => peer.addTrack(track, state.localStream));
+
+  const videoStream = state.screenStream || state.localStream;
+  videoStream?.getVideoTracks().forEach((track) => peer.addTrack(track, videoStream));
 }
 
 function createPeer(id, politeOffer) {
@@ -409,7 +452,7 @@ function createPeer(id, politeOffer) {
 
   const peer = new RTCPeerConnection({ iceServers: state.iceServers });
   state.peers.set(id, peer);
-  state.localStream?.getTracks().forEach((track) => peer.addTrack(track, state.localStream));
+  addOutboundTracks(peer);
 
   peer.onicecandidate = (event) => {
     if (event.candidate) socket.emit("signal:ice", { to: id, candidate: event.candidate });
@@ -417,7 +460,12 @@ function createPeer(id, politeOffer) {
 
   peer.ontrack = (event) => {
     const user = state.users.get(id);
-    addVideoTile(id, event.streams[0], user?.name || "Друг");
+    const stream = event.streams[0] || new MediaStream([event.track]);
+    addVideoTile(id, stream, user?.name || "Друг");
+    stream.addEventListener("removetrack", () => refreshRemoteVideoTile(id, stream));
+    event.track.addEventListener("ended", () => refreshRemoteVideoTile(id, stream));
+    event.track.addEventListener("mute", () => refreshRemoteVideoTile(id, stream));
+    event.track.addEventListener("unmute", () => refreshRemoteVideoTile(id, stream));
   };
 
   peer.onconnectionstatechange = () => {
@@ -426,9 +474,7 @@ function createPeer(id, politeOffer) {
 
   if (politeOffer) {
     peer.onnegotiationneeded = async () => {
-      const offer = await peer.createOffer();
-      await peer.setLocalDescription(offer);
-      socket.emit("signal:offer", { to: id, description: peer.localDescription });
+      await renegotiatePeer(id, peer);
     };
   }
 
@@ -460,10 +506,25 @@ function removePeer(id) {
   renderVideoEmptyState();
 }
 
+function refreshRemoteVideoTile(id, stream) {
+  const user = state.users.get(id);
+  addVideoTile(id, stream, user?.name || "Друг");
+}
+
+function syncRemoteVideoTiles(users) {
+  for (const user of users) {
+    if (user.id === state.selfId || !user.inCall) continue;
+
+    const tile = document.querySelector(`[data-video-id="${CSS.escape(user.id)}"]`);
+    const stream = tile?.querySelector("video")?.srcObject;
+    if (stream) addVideoTile(user.id, stream, user.name || "Друг");
+  }
+}
+
 function addVideoTile(id, stream, label) {
   document.querySelector(".empty-call")?.remove();
   let tile = document.querySelector(`[data-video-id="${CSS.escape(id)}"]`);
-  const hasVideo = stream?.getVideoTracks().length > 0;
+  const hasVideo = stream?.getVideoTracks().some((track) => track.readyState === "live") || false;
 
   if (!tile) {
     tile = document.createElement("article");
