@@ -44,6 +44,7 @@ const state = {
   color: "#4f8cff",
   users: new Map(),
   peers: new Map(),
+  remoteStreams: new Map(),
   localStream: null,
   screenStream: null,
   inCall: false,
@@ -52,6 +53,7 @@ const state = {
 };
 
 loadConfig();
+setupScreenShareSupport();
 boot();
 
 els.loginTab.addEventListener("click", () => setAuthMode("login"));
@@ -233,7 +235,7 @@ function connectSocket() {
     if (state.inCall) {
       for (const user of users) {
         if (user.id !== state.selfId && user.inCall && !state.peers.has(user.id)) {
-          createPeer(user.id, true);
+          createPeer(user.id, shouldInitiatePeer(user.id));
         }
       }
     }
@@ -242,7 +244,7 @@ function connectSocket() {
   socket.on("chat:message", addMessage);
   socket.on("system:notice", addNotice);
   socket.on("call:user-joined", ({ id }) => {
-    if (state.inCall && id !== state.selfId) createPeer(id, true);
+    if (state.inCall && id !== state.selfId) createPeer(id, shouldInitiatePeer(id));
   });
   socket.on("call:user-left", ({ id }) => removePeer(id));
   socket.on("signal:offer", handleOffer);
@@ -314,7 +316,7 @@ async function joinCall() {
     if (!media.video) addNotice("Камера недоступна, вы вошли в звонок с микрофоном.");
 
     for (const user of state.users.values()) {
-      if (user.id !== state.selfId && user.inCall) createPeer(user.id, true);
+      if (user.id !== state.selfId && user.inCall) createPeer(user.id, shouldInitiatePeer(user.id));
     }
   } catch (error) {
     addNotice(mediaErrorMessage(error));
@@ -373,6 +375,10 @@ async function startScreenShare() {
     addNotice("Сначала войдите в звонок, потом включите демонстрацию экрана.");
     return;
   }
+  if (!canShareScreen()) {
+    addNotice("Этот браузер не умеет запускать демонстрацию экрана. Включите демонстрацию с ПК, а с телефона ее можно смотреть.");
+    return;
+  }
 
   try {
     state.screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
@@ -383,9 +389,34 @@ async function startScreenShare() {
     els.screenButton.textContent = "stop";
     socket.emit("call:screen", true);
     screenTrack.addEventListener("ended", stopScreenShare, { once: true });
-  } catch {
-    addNotice("Демонстрация экрана отменена.");
+  } catch (error) {
+    addNotice(screenShareErrorMessage(error));
   }
+}
+
+function setupScreenShareSupport() {
+  if (canShareScreen()) return;
+
+  els.screenButton.disabled = true;
+  els.screenButton.title = "Демонстрация экрана доступна в браузере на компьютере";
+}
+
+function canShareScreen() {
+  return Boolean(navigator.mediaDevices?.getDisplayMedia);
+}
+
+function screenShareErrorMessage(error) {
+  const name = error?.name || "";
+  if (name === "NotAllowedError" || name === "SecurityError") {
+    return "Браузер не дал доступ к демонстрации экрана. Разрешите доступ или выберите окно заново.";
+  }
+  if (name === "NotFoundError" || name === "AbortError") {
+    return "Демонстрация экрана отменена.";
+  }
+  if (name === "NotReadableError") {
+    return "Не получилось захватить выбранное окно. Попробуйте выбрать весь экран или другое окно.";
+  }
+  return "Этот браузер не смог запустить демонстрацию экрана.";
 }
 
 async function stopScreenShare(options = {}) {
@@ -447,6 +478,10 @@ function addOutboundTracks(peer) {
   videoStream?.getVideoTracks().forEach((track) => peer.addTrack(track, videoStream));
 }
 
+function shouldInitiatePeer(id) {
+  return state.selfId > id;
+}
+
 function createPeer(id, politeOffer) {
   if (state.peers.has(id)) return state.peers.get(id);
 
@@ -460,12 +495,17 @@ function createPeer(id, politeOffer) {
 
   peer.ontrack = (event) => {
     const user = state.users.get(id);
-    const stream = event.streams[0] || new MediaStream([event.track]);
+    const stream = getRemoteStream(id);
+    if (!stream.getTracks().some((track) => track.id === event.track.id)) {
+      stream.addTrack(event.track);
+    }
     addVideoTile(id, stream, user?.name || "Друг");
-    stream.addEventListener("removetrack", () => refreshRemoteVideoTile(id, stream));
-    event.track.addEventListener("ended", () => refreshRemoteVideoTile(id, stream));
-    event.track.addEventListener("mute", () => refreshRemoteVideoTile(id, stream));
-    event.track.addEventListener("unmute", () => refreshRemoteVideoTile(id, stream));
+    event.track.addEventListener("ended", () => {
+      stream.removeTrack(event.track);
+      refreshRemoteVideoTile(id);
+    });
+    event.track.addEventListener("mute", () => refreshRemoteVideoTile(id));
+    event.track.addEventListener("unmute", () => refreshRemoteVideoTile(id));
   };
 
   peer.onconnectionstatechange = () => {
@@ -502,21 +542,39 @@ async function handleIce({ from, candidate }) {
 function removePeer(id) {
   state.peers.get(id)?.close();
   state.peers.delete(id);
+  state.remoteStreams.delete(id);
   document.querySelector(`[data-video-id="${CSS.escape(id)}"]`)?.remove();
   renderVideoEmptyState();
 }
 
-function refreshRemoteVideoTile(id, stream) {
+function getRemoteStream(id) {
+  if (!state.remoteStreams.has(id)) {
+    state.remoteStreams.set(id, new MediaStream());
+  }
+  return state.remoteStreams.get(id);
+}
+
+function refreshRemoteVideoTile(id) {
   const user = state.users.get(id);
+  const stream = state.remoteStreams.get(id);
+  if (!stream || !stream.getTracks().length) {
+    document.querySelector(`[data-video-id="${CSS.escape(id)}"]`)?.remove();
+    renderVideoEmptyState();
+    return;
+  }
   addVideoTile(id, stream, user?.name || "Друг");
 }
 
 function syncRemoteVideoTiles(users) {
+  const liveUserIds = new Set(users.filter((user) => user.inCall).map((user) => user.id));
+  for (const id of [...state.remoteStreams.keys()]) {
+    if (!liveUserIds.has(id)) removePeer(id);
+  }
+
   for (const user of users) {
     if (user.id === state.selfId || !user.inCall) continue;
 
-    const tile = document.querySelector(`[data-video-id="${CSS.escape(user.id)}"]`);
-    const stream = tile?.querySelector("video")?.srcObject;
+    const stream = state.remoteStreams.get(user.id);
     if (stream) addVideoTile(user.id, stream, user.name || "Друг");
   }
 }
