@@ -2,7 +2,7 @@ services:
   no-comments:
     image: node:22-alpine
     working_dir: /app
-    command: sh -c "corepack enable && pnpm install --prod && pnpm start"
+    command: sh -c "npm install --omit=dev && npm start"
     ports:
       - "3000:3000"
     environment:
