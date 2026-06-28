@@ -284,7 +284,7 @@ export function startServer(port = PORT) {
     httpServer.listen(port, () => {
       const address = httpServer.address();
       const resolvedPort = typeof address === "object" && address ? address.port : port;
-      console.log(`No Comment\`s is running on http://localhost:${resolvedPort}`);
+      console.log(`Kolink is running on http://localhost:${resolvedPort}`);
       resolve({
         port: resolvedPort,
         close: () =>

@@ -1,5 +1,5 @@
 services:
-  no-comments:
+  kolink:
     image: node:22-alpine
     working_dir: /app
     command: sh -c "npm install --omit=dev && npm start"
@@ -22,7 +22,7 @@ services:
       - --log-file=stdout
       - --fingerprint
       - --lt-cred-mech
-      - --user=${TURN_USER:-no-comments}:${TURN_PASSWORD:-change-me}
-      - --realm=${TURN_REALM:-no-comments.local}
+      - --user=${TURN_USER:-kolink}:${TURN_PASSWORD:-change-me}
+      - --realm=${TURN_REALM:-kolink.local}
       - --no-cli
     restart: unless-stopped

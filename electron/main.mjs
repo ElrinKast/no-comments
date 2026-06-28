@@ -31,7 +31,7 @@ async function createWindow() {
     minWidth: 920,
     minHeight: 640,
     backgroundColor: "#111318",
-    title: "No Comment`s",
+    title: "Kolink",
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,

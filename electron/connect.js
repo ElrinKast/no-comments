@@ -6,11 +6,11 @@ const errorText = document.querySelector("#errorText");
 remoteForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   errorText.textContent = "";
-  const response = await window.noComments.connectRemote(serverUrl.value);
+  const response = await window.kolink.connectRemote(serverUrl.value);
   if (!response.ok) errorText.textContent = response.error;
 });
 
 localButton.addEventListener("click", async () => {
   errorText.textContent = "";
-  await window.noComments.connectLocal();
+  await window.kolink.connectLocal();
 });

@@ -1,8 +1,8 @@
 {
-  "name": "no-comments",
+  "name": "kolink",
   "version": "0.1.0",
   "private": true,
-  "description": "No Comment`s is a small Discord-like app for friends with chat, profiles, calls, and screen sharing.",
+  "description": "Kolink is a Discord-like app with chat, profiles, calls, and screen sharing.",
   "type": "module",
   "main": "electron/main.mjs",
   "scripts": {
@@ -20,8 +20,8 @@
     "electron-builder": "^24.13.3"
   },
   "build": {
-    "appId": "local.no.comments",
-    "productName": "No Comment`s",
+    "appId": "ru.kolink.app",
+    "productName": "Kolink",
     "directories": {
       "output": "release"
     },

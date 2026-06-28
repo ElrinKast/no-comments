@@ -35,7 +35,7 @@ const els = {
 
 const state = {
   authMode: "login",
-  token: localStorage.getItem("noCommentsToken") || "",
+  token: localStorage.getItem("kolinkToken") || localStorage.getItem("noCommentsToken") || "",
   user: null,
   selfId: "",
   serverId: "home",
@@ -108,6 +108,7 @@ els.logoutButton.addEventListener("click", async () => {
   await api("/api/auth/logout", { method: "POST" });
   leaveCall();
   socket?.disconnect();
+  localStorage.removeItem("kolinkToken");
   localStorage.removeItem("noCommentsToken");
   state.token = "";
   state.user = null;
@@ -157,6 +158,7 @@ async function boot() {
 
   const response = await api("/api/me");
   if (response.error) {
+    localStorage.removeItem("kolinkToken");
     localStorage.removeItem("noCommentsToken");
     return;
   }
@@ -186,7 +188,8 @@ async function enterApp() {
 function setSession(token, user) {
   state.token = token;
   state.user = user;
-  localStorage.setItem("noCommentsToken", token);
+  localStorage.setItem("kolinkToken", token);
+  localStorage.removeItem("noCommentsToken");
 }
 
 function setAuthMode(mode) {

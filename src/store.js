@@ -16,7 +16,7 @@ const defaultDb = {
   servers: [
     {
       id: DEFAULT_SERVER_ID,
-      name: "No Comment`s",
+      name: "Kolink",
       ownerId: null,
       createdAt: new Date().toISOString()
     }

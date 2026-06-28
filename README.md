@@ -1,4 +1,4 @@
-# No Comment`s
+# Kolink
 
 Аналог Discord в разработке: регистрация, вход, серверы, каналы, чат, профили, звонки и демонстрация экрана.
 
@@ -51,7 +51,7 @@ docker compose up -d
 
 ```bash
 TURN_URL=turn:your-domain.example:3478
-TURN_USER=no-comments
+TURN_USER=kolink
 TURN_PASSWORD=strong-password
 TURN_REALM=your-domain.example
 ```
