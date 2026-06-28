@@ -303,19 +303,49 @@ function renderChannels() {
 
 async function joinCall() {
   try {
-    state.localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
+    const media = await getCallMedia();
+    state.localStream = media.stream;
     state.inCall = true;
-    addVideoTile(state.selfId, state.localStream, "Вы");
+    addVideoTile(state.selfId, state.localStream, media.video ? "Вы" : "Вы · только голос");
     socket.emit("call:join");
     els.callButton.textContent = "Выйти";
     els.callButton.classList.add("active");
+    if (!media.video) addNotice("Камера недоступна, вы вошли в звонок с микрофоном.");
 
     for (const user of state.users.values()) {
       if (user.id !== state.selfId && user.inCall) createPeer(user.id, true);
     }
-  } catch {
-    addNotice("Нет доступа к камере или микрофону.");
+  } catch (error) {
+    addNotice(mediaErrorMessage(error));
   }
+}
+
+async function getCallMedia() {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
+    return { stream, video: true };
+  } catch (cameraError) {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+      return { stream, video: false };
+    } catch (audioError) {
+      throw audioError?.name ? audioError : cameraError;
+    }
+  }
+}
+
+function mediaErrorMessage(error) {
+  const name = error?.name || "";
+  if (name === "NotAllowedError" || name === "SecurityError") {
+    return "Браузер запретил доступ к микрофону. Разрешите доступ в настройках сайта.";
+  }
+  if (name === "NotFoundError" || name === "DevicesNotFoundError") {
+    return "Микрофон или камера не найдены. Подключите устройство или выберите его в браузере.";
+  }
+  if (name === "NotReadableError" || name === "TrackStartError") {
+    return "Устройство занято другой программой. Закройте Discord, OBS, браузерные вкладки или перезапустите браузер.";
+  }
+  return "Не получилось получить доступ к микрофону или камере.";
 }
 
 function leaveCall() {
@@ -433,18 +463,21 @@ function removePeer(id) {
 function addVideoTile(id, stream, label) {
   document.querySelector(".empty-call")?.remove();
   let tile = document.querySelector(`[data-video-id="${CSS.escape(id)}"]`);
+  const hasVideo = stream?.getVideoTracks().length > 0;
 
   if (!tile) {
     tile = document.createElement("article");
     tile.className = "video-tile";
     tile.dataset.videoId = id;
-    tile.innerHTML = `<video autoplay playsinline></video><span class="video-label"></span>`;
+    tile.innerHTML = `<video autoplay playsinline></video><div class="audio-only-tile">VOICE</div><span class="video-label"></span>`;
     els.videoGrid.append(tile);
   }
 
   const video = tile.querySelector("video");
   video.srcObject = stream;
   video.muted = id === state.selfId;
+  video.hidden = !hasVideo;
+  tile.querySelector(".audio-only-tile").hidden = hasVideo;
   tile.querySelector(".video-label").textContent = label;
 }
 

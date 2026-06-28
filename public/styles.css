@@ -429,6 +429,18 @@ video {
   background: #050609;
 }
 
+.audio-only-tile {
+  display: grid;
+  width: 100%;
+  height: 100%;
+  min-height: 210px;
+  place-items: center;
+  background: #151820;
+  color: var(--muted);
+  font-weight: 800;
+  letter-spacing: 0;
+}
+
 .video-label {
   position: absolute;
   left: 10px;
