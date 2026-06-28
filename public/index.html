@@ -7,32 +7,69 @@
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
-    <main class="app-shell">
-      <aside class="sidebar" aria-label="Профиль и друзья">
-        <section class="brand">
-          <div class="brand-mark">FV</div>
+    <main id="authScreen" class="auth-screen">
+      <section class="auth-panel">
+        <div class="brand">
+          <div class="brand-mark">NC</div>
           <div>
             <h1>No Comment`s</h1>
-            <p>Комната для своих</p>
+            <p>Голос, чат и свои серверы</p>
+          </div>
+        </div>
+
+        <div class="auth-tabs">
+          <button id="loginTab" class="active" type="button">Вход</button>
+          <button id="registerTab" type="button">Регистрация</button>
+        </div>
+
+        <form id="authForm" class="auth-form">
+          <label id="usernameLabel" hidden>
+            Никнейм
+            <input id="usernameInput" autocomplete="username" maxlength="28" />
+          </label>
+          <label>
+            Email
+            <input id="emailInput" type="email" autocomplete="email" required />
+          </label>
+          <label>
+            Пароль
+            <input id="passwordInput" type="password" autocomplete="current-password" minlength="8" required />
+          </label>
+          <button id="authSubmit" class="primary-action" type="submit">Войти</button>
+          <p id="authError" class="error-text" role="alert"></p>
+        </form>
+      </section>
+    </main>
+
+    <main id="appShell" class="app-shell" hidden>
+      <aside class="server-rail" aria-label="Серверы">
+        <button class="server-button active" type="button" title="No Comment`s">NC</button>
+      </aside>
+
+      <aside class="sidebar" aria-label="Каналы и профиль">
+        <section class="brand compact">
+          <div class="brand-mark">NC</div>
+          <div>
+            <h1>No Comment`s</h1>
+            <p id="serverLabel">Сервер</p>
           </div>
         </section>
 
-        <form id="joinForm" class="join-panel">
+        <section class="channels-panel">
+          <div class="section-title">
+            <h2>Каналы</h2>
+          </div>
+          <ul id="channelList" class="channel-list"></ul>
+        </section>
+
+        <form id="profileForm" class="join-panel">
           <label>
-            Имя
-            <input id="nameInput" name="name" autocomplete="nickname" maxlength="28" required />
+            Отображаемое имя
+            <input id="displayNameInput" maxlength="28" required />
           </label>
           <label>
             Статус
-            <input id="statusInput" name="status" maxlength="64" />
-          </label>
-          <label>
-            Комната
-            <input id="roomInput" name="room" maxlength="40" required />
-          </label>
-          <label>
-            Код
-            <input id="inviteInput" name="invite" autocomplete="off" />
+            <input id="statusInput" maxlength="64" />
           </label>
           <div class="color-row">
             <button class="swatch active" type="button" data-color="#4f8cff" aria-label="Синий"></button>
@@ -40,8 +77,9 @@
             <button class="swatch" type="button" data-color="#e25555" aria-label="Красный"></button>
             <button class="swatch" type="button" data-color="#f0a43c" aria-label="Оранжевый"></button>
           </div>
-          <button class="primary-action" type="submit">Войти</button>
-          <p id="joinError" class="error-text" role="alert"></p>
+          <button class="secondary-action" type="submit">Сохранить профиль</button>
+          <button id="logoutButton" class="ghost-action" type="button">Выйти</button>
+          <p id="profileError" class="error-text" role="alert"></p>
         </form>
 
         <section class="people-panel">
@@ -56,13 +94,13 @@
       <section class="workspace">
         <header class="topbar">
           <div>
-            <p id="roomLabel" class="eyebrow"># lounge</p>
-            <h2>Общий канал</h2>
+            <p id="roomLabel" class="eyebrow"># general</p>
+            <h2 id="channelTitle">general</h2>
           </div>
           <div class="call-actions">
-            <button id="muteButton" class="icon-button" type="button" title="Микрофон" disabled>mic</button>
-            <button id="screenButton" class="icon-button" type="button" title="Демонстрация экрана" disabled>screen</button>
-            <button id="callButton" class="call-button" type="button" disabled>Позвонить</button>
+            <button id="muteButton" class="icon-button" type="button" title="Микрофон">mic</button>
+            <button id="screenButton" class="icon-button" type="button" title="Демонстрация экрана">screen</button>
+            <button id="callButton" class="call-button" type="button">Позвонить</button>
           </div>
         </header>
 
@@ -70,7 +108,7 @@
           <div id="videoGrid" class="video-grid">
             <div class="empty-call">
               <strong>Звонок пока пуст</strong>
-              <span>Войдите в комнату и нажмите “Позвонить”.</span>
+              <span>Нажмите “Позвонить”, чтобы зайти в голос.</span>
             </div>
           </div>
         </section>
@@ -78,8 +116,8 @@
         <section class="chat-panel">
           <div id="messages" class="messages" aria-live="polite"></div>
           <form id="messageForm" class="message-form">
-            <input id="messageInput" type="text" maxlength="1200" placeholder="Сообщение друзьям..." disabled />
-            <button type="submit" disabled>Отправить</button>
+            <input id="messageInput" type="text" maxlength="1200" placeholder="Сообщение в канал..." />
+            <button type="submit">Отправить</button>
           </form>
         </section>
       </section>

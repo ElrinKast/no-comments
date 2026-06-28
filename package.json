@@ -28,6 +28,7 @@
     "files": [
       "electron/**/*",
       "public/**/*",
+      "src/**/*",
       "server.js",
       "docker-compose.yml",
       "package.json"

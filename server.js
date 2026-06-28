@@ -4,12 +4,26 @@ import { Server } from "socket.io";
 import crypto from "node:crypto";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import {
+  addChannelMessage,
+  channelExists,
+  createSession,
+  createUser,
+  DEFAULT_CHANNEL_ID,
+  deleteSession,
+  getChannelMessages,
+  getUserByToken,
+  getWorkspace,
+  publicUser,
+  updateUserProfile
+} from "./src/store.js";
 
 const PORT = Number(process.env.PORT || 3000);
-const INVITE_CODE = process.env.FRIENDS_INVITE_CODE || "";
 const MAX_HISTORY = 80;
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DEFAULT_ICE_SERVERS = [{ urls: "stun:stun.l.google.com:19302" }];
+
+const channelMembers = new Map();
 
 function iceServers() {
   if (!process.env.TURN_URL) return DEFAULT_ICE_SERVERS;
@@ -24,133 +38,209 @@ function iceServers() {
   ];
 }
 
-const rooms = new Map();
-
-function getRoom(roomId) {
-  if (!rooms.has(roomId)) {
-    rooms.set(roomId, {
-      members: new Map(),
-      messages: []
-    });
+function getChannel(channelId) {
+  if (!channelMembers.has(channelId)) {
+    channelMembers.set(channelId, new Map());
   }
 
-  return rooms.get(roomId);
+  return channelMembers.get(channelId);
 }
 
-function roomUsers(roomId) {
-  return [...getRoom(roomId).members.values()].map((member) => ({
-    id: member.id,
-    name: member.name,
-    status: member.status,
-    color: member.color,
-    avatar: member.avatar,
+function channelUsers(channelId) {
+  return [...getChannel(channelId).values()].map((member) => ({
+    id: member.socketId,
+    userId: member.user.id,
+    name: member.user.displayName,
+    username: member.user.username,
+    status: member.user.status,
+    color: member.user.color,
+    avatar: member.user.avatar,
     inCall: member.inCall,
     sharingScreen: member.sharingScreen
   }));
 }
 
-function emitPresence(io, roomId) {
-  io.to(roomId).emit("presence:update", roomUsers(roomId));
+function emitPresence(io, channelId) {
+  io.to(channelId).emit("presence:update", channelUsers(channelId));
+}
+
+function requireAuth(req, res, next) {
+  const header = req.get("authorization") || "";
+  const token = header.replace(/^Bearer\s+/i, "");
+
+  getUserByToken(token)
+    .then((user) => {
+      if (!user) {
+        res.status(401).json({ error: "Нужно войти в аккаунт." });
+        return;
+      }
+
+      req.token = token;
+      req.user = user;
+      next();
+    })
+    .catch(next);
+}
+
+function attachApi(app) {
+  app.use(express.json({ limit: "64kb" }));
+
+  app.get("/config.json", (_req, res) => {
+    res.json({
+      iceServers: iceServers()
+    });
+  });
+
+  app.post("/api/auth/register", async (req, res) => {
+    try {
+      const user = await createUser(req.body);
+      const session = await createSession({ email: req.body.email, password: req.body.password });
+      res.status(201).json({ token: session.token, user });
+    } catch (error) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/auth/login", async (req, res) => {
+    try {
+      res.json(await createSession(req.body));
+    } catch (error) {
+      res.status(401).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/auth/logout", requireAuth, async (req, res) => {
+    await deleteSession(req.token);
+    res.json({ ok: true });
+  });
+
+  app.get("/api/me", requireAuth, (req, res) => {
+    res.json({ user: publicUser(req.user) });
+  });
+
+  app.patch("/api/me", requireAuth, async (req, res) => {
+    try {
+      res.json({ user: await updateUserProfile(req.user.id, req.body) });
+    } catch (error) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  app.get("/api/workspace", requireAuth, async (_req, res) => {
+    res.json(await getWorkspace());
+  });
 }
 
 function attachRealtime(io) {
-  io.on("connection", (socket) => {
-    socket.on("room:join", (payload = {}, ack) => {
-    const roomId = String(payload.roomId || "lounge").trim().slice(0, 40) || "lounge";
-    const name = String(payload.name || "Friend").trim().slice(0, 28) || "Friend";
-    const inviteCode = String(payload.inviteCode || "");
+  io.use(async (socket, next) => {
+    const token = socket.handshake.auth?.token;
+    const user = await getUserByToken(token);
 
-    if (INVITE_CODE && inviteCode !== INVITE_CODE) {
-      ack?.({ ok: false, error: "Неверный код приглашения." });
+    if (!user) {
+      next(new Error("unauthorized"));
       return;
     }
 
-    const member = {
-      id: socket.id,
-      name,
-      roomId,
-      status: String(payload.status || "В сети").trim().slice(0, 64),
-      color: String(payload.color || "#4f8cff").slice(0, 16),
-      avatar: String(payload.avatar || name[0] || "F").trim().slice(0, 2).toUpperCase(),
-      inCall: false,
-      sharingScreen: false
-    };
+    socket.data.user = user;
+    next();
+  });
 
-    socket.data.member = member;
-    socket.join(roomId);
-    getRoom(roomId).members.set(socket.id, member);
+  io.on("connection", (socket) => {
+    socket.on("room:join", async (payload = {}, ack) => {
+      const requestedChannel = String(payload.channelId || payload.roomId || DEFAULT_CHANNEL_ID).trim();
+      const channelId = (await channelExists(requestedChannel)) ? requestedChannel : DEFAULT_CHANNEL_ID;
+      const user = await getUserByToken(socket.handshake.auth?.token);
 
-    ack?.({
-      ok: true,
-      selfId: socket.id,
-      roomId,
-      messages: getRoom(roomId).messages,
-      users: roomUsers(roomId)
+      if (!user) {
+        ack?.({ ok: false, error: "Сессия устарела. Войдите заново." });
+        return;
+      }
+
+      if (socket.data.member) {
+        const oldChannel = getChannel(socket.data.member.channelId);
+        oldChannel.delete(socket.id);
+        socket.leave(socket.data.member.channelId);
+        emitPresence(io, socket.data.member.channelId);
+      }
+
+      const member = {
+        socketId: socket.id,
+        channelId,
+        user,
+        inCall: false,
+        sharingScreen: false
+      };
+
+      socket.data.member = member;
+      socket.join(channelId);
+      getChannel(channelId).set(socket.id, member);
+
+      ack?.({
+        ok: true,
+        selfId: socket.id,
+        channelId,
+        messages: await getChannelMessages(channelId, MAX_HISTORY),
+        users: channelUsers(channelId)
+      });
+
+      socket.to(channelId).emit("system:notice", `${user.displayName} подключился`);
+      emitPresence(io, channelId);
     });
 
-    socket.to(roomId).emit("system:notice", `${member.name} подключился`);
-    emitPresence(io, roomId);
+    socket.on("profile:update", async (profile = {}) => {
+      const member = socket.data.member;
+      if (!member) return;
+
+      member.user = await updateUserProfile(member.user.id, profile);
+      emitPresence(io, member.channelId);
     });
 
-    socket.on("profile:update", (profile = {}) => {
-    const member = socket.data.member;
-    if (!member) return;
+    socket.on("chat:message", async (text) => {
+      const member = socket.data.member;
+      if (!member) return;
 
-    member.name = String(profile.name || member.name).trim().slice(0, 28) || member.name;
-    member.status = String(profile.status || member.status).trim().slice(0, 64);
-    member.color = String(profile.color || member.color).slice(0, 16);
-    member.avatar = String(profile.avatar || member.avatar).trim().slice(0, 2).toUpperCase() || member.avatar;
-    emitPresence(io, member.roomId);
-    });
+      const cleanText = String(text || "").trim().slice(0, 1200);
+      if (!cleanText) return;
 
-    socket.on("chat:message", (text) => {
-    const member = socket.data.member;
-    if (!member) return;
+      const message = {
+        id: crypto.randomUUID(),
+        userId: member.user.id,
+        name: member.user.displayName,
+        color: member.user.color,
+        avatar: member.user.avatar,
+        text: cleanText,
+        createdAt: new Date().toISOString()
+      };
 
-    const cleanText = String(text || "").trim().slice(0, 1200);
-    if (!cleanText) return;
-
-    const message = {
-      id: crypto.randomUUID(),
-      userId: member.id,
-      name: member.name,
-      color: member.color,
-      avatar: member.avatar,
-      text: cleanText,
-      createdAt: new Date().toISOString()
-    };
-
-    const room = getRoom(member.roomId);
-    room.messages.push(message);
-    room.messages = room.messages.slice(-MAX_HISTORY);
-    io.to(member.roomId).emit("chat:message", message);
+      await addChannelMessage(member.channelId, message);
+      io.to(member.channelId).emit("chat:message", message);
     });
 
     socket.on("call:join", () => {
-    const member = socket.data.member;
-    if (!member) return;
+      const member = socket.data.member;
+      if (!member) return;
 
-    member.inCall = true;
-    socket.to(member.roomId).emit("call:user-joined", { id: member.id });
-    emitPresence(io, member.roomId);
+      member.inCall = true;
+      socket.to(member.channelId).emit("call:user-joined", { id: member.socketId });
+      emitPresence(io, member.channelId);
     });
 
     socket.on("call:leave", () => {
-    const member = socket.data.member;
-    if (!member) return;
+      const member = socket.data.member;
+      if (!member) return;
 
-    member.inCall = false;
-    member.sharingScreen = false;
-    socket.to(member.roomId).emit("call:user-left", { id: member.id });
-    emitPresence(io, member.roomId);
+      member.inCall = false;
+      member.sharingScreen = false;
+      socket.to(member.channelId).emit("call:user-left", { id: member.socketId });
+      emitPresence(io, member.channelId);
     });
 
     socket.on("call:screen", (sharingScreen) => {
-    const member = socket.data.member;
-    if (!member) return;
+      const member = socket.data.member;
+      if (!member) return;
 
-    member.sharingScreen = Boolean(sharingScreen);
-    emitPresence(io, member.roomId);
+      member.sharingScreen = Boolean(sharingScreen);
+      emitPresence(io, member.channelId);
     });
 
     socket.on("signal:offer", ({ to, description }) => {
@@ -166,14 +256,13 @@ function attachRealtime(io) {
     });
 
     socket.on("disconnect", () => {
-    const member = socket.data.member;
-    if (!member) return;
+      const member = socket.data.member;
+      if (!member) return;
 
-    const room = getRoom(member.roomId);
-    room.members.delete(socket.id);
-    socket.to(member.roomId).emit("call:user-left", { id: socket.id });
-    socket.to(member.roomId).emit("system:notice", `${member.name} отключился`);
-    emitPresence(io, member.roomId);
+      getChannel(member.channelId).delete(socket.id);
+      socket.to(member.channelId).emit("call:user-left", { id: socket.id });
+      socket.to(member.channelId).emit("system:notice", `${member.user.displayName} отключился`);
+      emitPresence(io, member.channelId);
     });
   });
 }
@@ -187,12 +276,8 @@ export function startServer(port = PORT) {
     }
   });
 
+  attachApi(app);
   app.use(express.static(join(__dirname, "public")));
-  app.get("/config.json", (_req, res) => {
-    res.json({
-      iceServers: iceServers()
-    });
-  });
   attachRealtime(io);
 
   return new Promise((resolve) => {

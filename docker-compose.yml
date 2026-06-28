@@ -7,7 +7,6 @@ services:
       - "3000:3000"
     environment:
       PORT: "3000"
-      FRIENDS_INVITE_CODE: "${FRIENDS_INVITE_CODE:-}"
       TURN_URL: "${TURN_URL:-}"
       TURN_USER: "${TURN_USER:-}"
       TURN_PASSWORD: "${TURN_PASSWORD:-}"

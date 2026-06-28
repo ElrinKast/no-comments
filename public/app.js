@@ -1,15 +1,28 @@
-const socket = io();
+let socket;
 
 const els = {
-  joinForm: document.querySelector("#joinForm"),
-  nameInput: document.querySelector("#nameInput"),
+  authScreen: document.querySelector("#authScreen"),
+  appShell: document.querySelector("#appShell"),
+  loginTab: document.querySelector("#loginTab"),
+  registerTab: document.querySelector("#registerTab"),
+  authForm: document.querySelector("#authForm"),
+  usernameLabel: document.querySelector("#usernameLabel"),
+  usernameInput: document.querySelector("#usernameInput"),
+  emailInput: document.querySelector("#emailInput"),
+  passwordInput: document.querySelector("#passwordInput"),
+  authSubmit: document.querySelector("#authSubmit"),
+  authError: document.querySelector("#authError"),
+  profileForm: document.querySelector("#profileForm"),
+  displayNameInput: document.querySelector("#displayNameInput"),
   statusInput: document.querySelector("#statusInput"),
-  roomInput: document.querySelector("#roomInput"),
-  inviteInput: document.querySelector("#inviteInput"),
-  joinError: document.querySelector("#joinError"),
+  profileError: document.querySelector("#profileError"),
+  logoutButton: document.querySelector("#logoutButton"),
+  channelList: document.querySelector("#channelList"),
   peopleList: document.querySelector("#peopleList"),
   onlineCount: document.querySelector("#onlineCount"),
+  serverLabel: document.querySelector("#serverLabel"),
   roomLabel: document.querySelector("#roomLabel"),
+  channelTitle: document.querySelector("#channelTitle"),
   messageForm: document.querySelector("#messageForm"),
   messageInput: document.querySelector("#messageInput"),
   messages: document.querySelector("#messages"),
@@ -21,8 +34,13 @@ const els = {
 };
 
 const state = {
+  authMode: "login",
+  token: localStorage.getItem("noCommentsToken") || "",
+  user: null,
   selfId: "",
-  roomId: "lounge",
+  serverId: "home",
+  channelId: "general",
+  channels: [],
   color: "#4f8cff",
   users: new Map(),
   peers: new Map(),
@@ -34,21 +52,71 @@ const state = {
 };
 
 loadConfig();
+boot();
 
-const savedProfile = JSON.parse(localStorage.getItem("noCommentsProfile") || "{}");
-els.nameInput.value = savedProfile.name || "";
-els.statusInput.value = savedProfile.status || "В сети";
-els.roomInput.value = savedProfile.roomId || "lounge";
-els.inviteInput.value = savedProfile.inviteCode || "";
-if (savedProfile.color) setColor(savedProfile.color);
+els.loginTab.addEventListener("click", () => setAuthMode("login"));
+els.registerTab.addEventListener("click", () => setAuthMode("register"));
+
+els.authForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  els.authError.textContent = "";
+
+  const path = state.authMode === "register" ? "/api/auth/register" : "/api/auth/login";
+  const payload = {
+    email: els.emailInput.value,
+    password: els.passwordInput.value
+  };
+
+  if (state.authMode === "register") {
+    payload.username = els.usernameInput.value;
+  }
+
+  const response = await api(path, { method: "POST", body: payload, skipAuth: true });
+  if (response.error) {
+    els.authError.textContent = response.error;
+    return;
+  }
+
+  setSession(response.token, response.user);
+  await enterApp();
+});
+
+els.profileForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  els.profileError.textContent = "";
+
+  const response = await api("/api/me", {
+    method: "PATCH",
+    body: {
+      displayName: els.displayNameInput.value,
+      status: els.statusInput.value,
+      color: state.color,
+      avatar: (els.displayNameInput.value || state.user?.displayName || "NC").slice(0, 2)
+    }
+  });
+
+  if (response.error) {
+    els.profileError.textContent = response.error;
+    return;
+  }
+
+  state.user = response.user;
+  socket.emit("profile:update", response.user);
+});
+
+els.logoutButton.addEventListener("click", async () => {
+  await api("/api/auth/logout", { method: "POST" });
+  leaveCall();
+  socket?.disconnect();
+  localStorage.removeItem("noCommentsToken");
+  state.token = "";
+  state.user = null;
+  els.authScreen.hidden = false;
+  els.appShell.hidden = true;
+});
 
 els.swatches.forEach((button) => {
   button.addEventListener("click", () => setColor(button.dataset.color));
-});
-
-els.joinForm.addEventListener("submit", (event) => {
-  event.preventDefault();
-  joinRoom();
 });
 
 els.messageForm.addEventListener("submit", (event) => {
@@ -84,47 +152,128 @@ els.screenButton.addEventListener("click", () => {
   }
 });
 
-socket.on("presence:update", (users) => {
-  state.users = new Map(users.map((user) => [user.id, user]));
-  renderPeople(users);
+async function boot() {
+  if (!state.token) return;
 
-  if (state.inCall) {
-    for (const user of users) {
-      if (user.id !== state.selfId && user.inCall && !state.peers.has(user.id)) {
-        createPeer(user.id, true);
+  const response = await api("/api/me");
+  if (response.error) {
+    localStorage.removeItem("noCommentsToken");
+    return;
+  }
+
+  state.user = response.user;
+  await enterApp();
+}
+
+async function enterApp() {
+  els.authScreen.hidden = true;
+  els.appShell.hidden = false;
+  hydrateProfile();
+
+  const workspace = await api("/api/workspace");
+  if (!workspace.error) {
+    state.channels = workspace.channels;
+    const server = workspace.servers[0];
+    state.serverId = server?.id || "home";
+    els.serverLabel.textContent = server?.name || "Сервер";
+    renderChannels();
+  }
+
+  connectSocket();
+  joinChannel(state.channelId);
+}
+
+function setSession(token, user) {
+  state.token = token;
+  state.user = user;
+  localStorage.setItem("noCommentsToken", token);
+}
+
+function setAuthMode(mode) {
+  state.authMode = mode;
+  els.loginTab.classList.toggle("active", mode === "login");
+  els.registerTab.classList.toggle("active", mode === "register");
+  els.usernameLabel.hidden = mode !== "register";
+  els.usernameInput.required = mode === "register";
+  els.authSubmit.textContent = mode === "register" ? "Создать аккаунт" : "Войти";
+  els.passwordInput.autocomplete = mode === "register" ? "new-password" : "current-password";
+}
+
+async function api(path, options = {}) {
+  const headers = { "Content-Type": "application/json" };
+  if (state.token && !options.skipAuth) headers.Authorization = `Bearer ${state.token}`;
+
+  const response = await fetch(path, {
+    method: options.method || "GET",
+    headers,
+    body: options.body ? JSON.stringify(options.body) : undefined
+  });
+
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) return { error: data.error || "Ошибка запроса." };
+  return data;
+}
+
+function connectSocket() {
+  socket?.disconnect();
+  socket = io({ auth: { token: state.token } });
+
+  socket.on("connect_error", () => {
+    els.profileError.textContent = "Не удалось подключиться к realtime-серверу.";
+  });
+
+  socket.on("presence:update", (users) => {
+    state.users = new Map(users.map((user) => [user.id, user]));
+    renderPeople(users);
+
+    if (state.inCall) {
+      for (const user of users) {
+        if (user.id !== state.selfId && user.inCall && !state.peers.has(user.id)) {
+          createPeer(user.id, true);
+        }
       }
     }
-  }
-});
+  });
 
-socket.on("chat:message", addMessage);
-socket.on("system:notice", addNotice);
+  socket.on("chat:message", addMessage);
+  socket.on("system:notice", addNotice);
+  socket.on("call:user-joined", ({ id }) => {
+    if (state.inCall && id !== state.selfId) createPeer(id, true);
+  });
+  socket.on("call:user-left", ({ id }) => removePeer(id));
+  socket.on("signal:offer", handleOffer);
+  socket.on("signal:answer", handleAnswer);
+  socket.on("signal:ice", handleIce);
+}
 
-socket.on("call:user-joined", ({ id }) => {
-  if (state.inCall && id !== state.selfId) createPeer(id, true);
-});
+function joinChannel(channelId) {
+  if (state.inCall) leaveCall();
+  state.channelId = channelId;
+  const channel = state.channels.find((item) => item.id === channelId);
+  els.roomLabel.textContent = `# ${channel?.name || channelId}`;
+  els.channelTitle.textContent = channel?.name || channelId;
+  renderChannels();
 
-socket.on("call:user-left", ({ id }) => {
-  removePeer(id);
-});
+  socket.emit("room:join", { channelId }, (response) => {
+    if (!response?.ok) {
+      addNotice(response?.error || "Не получилось войти в канал.");
+      return;
+    }
 
-socket.on("signal:offer", async ({ from, description }) => {
-  const peer = createPeer(from, false);
-  await peer.setRemoteDescription(description);
-  const answer = await peer.createAnswer();
-  await peer.setLocalDescription(answer);
-  socket.emit("signal:answer", { to: from, description: peer.localDescription });
-});
+    state.selfId = response.selfId;
+    state.channelId = response.channelId;
+    els.messages.replaceChildren();
+    response.messages.forEach(addMessage);
+    renderPeople(response.users);
+    addNotice("Вы вошли в канал");
+  });
+}
 
-socket.on("signal:answer", async ({ from, description }) => {
-  const peer = state.peers.get(from);
-  if (peer) await peer.setRemoteDescription(description);
-});
-
-socket.on("signal:ice", async ({ from, candidate }) => {
-  const peer = state.peers.get(from);
-  if (peer && candidate) await peer.addIceCandidate(candidate);
-});
+function hydrateProfile() {
+  els.displayNameInput.value = state.user?.displayName || "";
+  els.statusInput.value = state.user?.status || "В сети";
+  setColor(state.user?.color || "#4f8cff");
+}
 
 function setColor(color) {
   state.color = color;
@@ -132,50 +281,21 @@ function setColor(color) {
   els.swatches.forEach((button) => button.classList.toggle("active", button.dataset.color === color));
 }
 
-function saveProfile() {
-  localStorage.setItem(
-    "noCommentsProfile",
-    JSON.stringify({
-      name: els.nameInput.value,
-      status: els.statusInput.value,
-      roomId: els.roomInput.value,
-      inviteCode: els.inviteInput.value,
-      color: state.color
+function renderChannels() {
+  els.channelList.replaceChildren(
+    ...state.channels.map((channel) => {
+      const button = document.createElement("button");
+      button.className = "channel-button";
+      button.type = "button";
+      button.classList.toggle("active", channel.id === state.channelId);
+      button.textContent = `# ${channel.name}`;
+      button.addEventListener("click", () => joinChannel(channel.id));
+
+      const item = document.createElement("li");
+      item.append(button);
+      return item;
     })
   );
-}
-
-function joinRoom() {
-  saveProfile();
-  const payload = {
-    name: els.nameInput.value,
-    status: els.statusInput.value,
-    roomId: els.roomInput.value,
-    inviteCode: els.inviteInput.value,
-    color: state.color,
-    avatar: (els.nameInput.value || "F").slice(0, 2)
-  };
-
-  socket.emit("room:join", payload, (response) => {
-    if (!response?.ok) {
-      els.joinError.textContent = response?.error || "Не получилось войти.";
-      return;
-    }
-
-    els.joinError.textContent = "";
-    state.selfId = response.selfId;
-    state.roomId = response.roomId;
-    els.roomLabel.textContent = `# ${response.roomId}`;
-    els.messageInput.disabled = false;
-    els.messageForm.querySelector("button").disabled = false;
-    els.callButton.disabled = false;
-    els.muteButton.disabled = false;
-    els.screenButton.disabled = false;
-    els.messages.replaceChildren();
-    response.messages.forEach(addMessage);
-    renderPeople(response.users);
-    addNotice("Вы вошли в комнату");
-  });
 }
 
 async function joinCall() {
@@ -190,13 +310,15 @@ async function joinCall() {
     for (const user of state.users.values()) {
       if (user.id !== state.selfId && user.inCall) createPeer(user.id, true);
     }
-  } catch (error) {
-    addNotice("Браузер не дал доступ к камере или микрофону.");
+  } catch {
+    addNotice("Нет доступа к камере или микрофону.");
   }
 }
 
 function leaveCall() {
-  socket.emit("call:leave");
+  if (!state.inCall && !state.localStream) return;
+
+  socket?.emit("call:leave");
   stopScreenShare();
   state.localStream?.getTracks().forEach((track) => track.stop());
   state.localStream = null;
@@ -208,6 +330,7 @@ function leaveCall() {
   els.muteButton.textContent = "mic";
 
   for (const id of [...state.peers.keys()]) removePeer(id);
+  document.querySelector(`[data-video-id="${CSS.escape(state.selfId)}"]`)?.remove();
   renderVideoEmptyState();
 }
 
@@ -238,7 +361,7 @@ function stopScreenShare() {
     addVideoTile(state.selfId, state.localStream, "Вы");
   }
   els.screenButton.classList.remove("active");
-  socket.emit("call:screen", false);
+  socket?.emit("call:screen", false);
 }
 
 function replaceVideoTrack(track) {
@@ -251,10 +374,7 @@ function replaceVideoTrack(track) {
 function createPeer(id, politeOffer) {
   if (state.peers.has(id)) return state.peers.get(id);
 
-  const peer = new RTCPeerConnection({
-    iceServers: state.iceServers
-  });
-
+  const peer = new RTCPeerConnection({ iceServers: state.iceServers });
   state.peers.set(id, peer);
   state.localStream?.getTracks().forEach((track) => peer.addTrack(track, state.localStream));
 
@@ -280,6 +400,24 @@ function createPeer(id, politeOffer) {
   }
 
   return peer;
+}
+
+async function handleOffer({ from, description }) {
+  const peer = createPeer(from, false);
+  await peer.setRemoteDescription(description);
+  const answer = await peer.createAnswer();
+  await peer.setLocalDescription(answer);
+  socket.emit("signal:answer", { to: from, description: peer.localDescription });
+}
+
+async function handleAnswer({ from, description }) {
+  const peer = state.peers.get(from);
+  if (peer) await peer.setRemoteDescription(description);
+}
+
+async function handleIce({ from, candidate }) {
+  const peer = state.peers.get(from);
+  if (peer && candidate) await peer.addIceCandidate(candidate);
 }
 
 function removePeer(id) {
@@ -312,7 +450,7 @@ function renderVideoEmptyState() {
 
   const empty = document.createElement("div");
   empty.className = "empty-call";
-  empty.innerHTML = "<strong>Звонок пока пуст</strong><span>Войдите в комнату и нажмите “Позвонить”.</span>";
+  empty.innerHTML = "<strong>Звонок пока пуст</strong><span>Нажмите “Позвонить”, чтобы зайти в голос.</span>";
   els.videoGrid.append(empty);
 }
 

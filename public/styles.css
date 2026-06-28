@@ -24,6 +24,10 @@ body {
   color: var(--text);
 }
 
+[hidden] {
+  display: none !important;
+}
+
 button,
 input {
   font: inherit;
@@ -42,8 +46,75 @@ input:disabled {
 
 .app-shell {
   display: grid;
-  grid-template-columns: 320px minmax(0, 1fr);
+  grid-template-columns: 72px 320px minmax(0, 1fr);
   min-height: 100vh;
+}
+
+.auth-screen {
+  display: grid;
+  min-height: 100vh;
+  padding: 20px;
+  place-items: center;
+}
+
+.auth-panel {
+  display: grid;
+  gap: 18px;
+  width: min(440px, 100%);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 22px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+}
+
+.auth-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.auth-tabs button,
+.secondary-action,
+.ghost-action,
+.channel-button {
+  min-height: 40px;
+  border-radius: 8px;
+  background: var(--panel-strong);
+  color: var(--text);
+  font-weight: 700;
+}
+
+.auth-tabs button.active,
+.channel-button.active {
+  background: var(--accent);
+  color: white;
+}
+
+.auth-form {
+  display: grid;
+  gap: 12px;
+}
+
+.server-rail {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 10px;
+  border-right: 1px solid var(--line);
+  background: #101217;
+}
+
+.server-button {
+  display: grid;
+  width: 48px;
+  height: 48px;
+  place-items: center;
+  border-radius: 8px;
+  background: var(--accent);
+  color: white;
+  font-weight: 800;
 }
 
 .sidebar {
@@ -60,6 +131,10 @@ input:disabled {
   align-items: center;
   gap: 12px;
   min-height: 56px;
+}
+
+.brand.compact {
+  min-height: 42px;
 }
 
 .brand-mark,
@@ -98,7 +173,8 @@ input:disabled {
 
 .join-panel,
 .people-panel,
-.chat-panel {
+.chat-panel,
+.channels-panel {
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -165,6 +241,7 @@ input:focus {
 }
 
 .primary-action,
+.secondary-action,
 .call-button,
 .message-form button {
   min-height: 42px;
@@ -173,6 +250,15 @@ input:focus {
   background: var(--accent);
   color: white;
   font-weight: 700;
+}
+
+.secondary-action {
+  background: var(--panel-strong);
+}
+
+.ghost-action {
+  background: transparent;
+  color: var(--muted);
 }
 
 .error-text {
@@ -184,6 +270,10 @@ input:focus {
 
 .people-panel {
   min-height: 220px;
+  overflow: hidden;
+}
+
+.channels-panel {
   overflow: hidden;
 }
 
@@ -201,12 +291,19 @@ input:focus {
   font-size: 18px;
 }
 
-.people-list {
+.people-list,
+.channel-list {
   display: grid;
   gap: 8px;
   margin: 0;
   padding: 12px;
   list-style: none;
+}
+
+.channel-button {
+  width: 100%;
+  padding: 0 12px;
+  text-align: left;
 }
 
 .person,
@@ -395,6 +492,13 @@ video {
 @media (max-width: 860px) {
   .app-shell {
     grid-template-columns: 1fr;
+  }
+
+  .server-rail {
+    flex-direction: row;
+    justify-content: center;
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
   }
 
   .sidebar {
