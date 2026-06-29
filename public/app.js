@@ -10,6 +10,8 @@ const els = {
   usernameInput: document.querySelector("#usernameInput"),
   emailInput: document.querySelector("#emailInput"),
   passwordInput: document.querySelector("#passwordInput"),
+  verificationCodeLabel: document.querySelector("#verificationCodeLabel"),
+  verificationCodeInput: document.querySelector("#verificationCodeInput"),
   authSubmit: document.querySelector("#authSubmit"),
   authError: document.querySelector("#authError"),
   profileForm: document.querySelector("#profileForm"),
@@ -35,7 +37,8 @@ const els = {
 };
 
 const state = {
-  authMode: "login",
+  authMode: "register",
+  emailVerificationPending: false,
   token: localStorage.getItem("kolinkToken") || localStorage.getItem("noCommentsToken") || "",
   user: null,
   selfId: "",
@@ -65,25 +68,43 @@ els.registerTab.addEventListener("click", () => setAuthMode("register"));
 els.authForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   els.authError.textContent = "";
+  els.authSubmit.disabled = true;
 
-  const path = state.authMode === "register" ? "/api/auth/register" : "/api/auth/login";
-  const payload = {
-    email: els.emailInput.value,
-    password: els.passwordInput.value
-  };
+  try {
+    const path = state.authMode === "register" ? "/api/auth/register" : "/api/auth/login";
+    const payload = {
+      email: els.emailInput.value,
+      password: els.passwordInput.value
+    };
 
-  if (state.authMode === "register") {
-    payload.username = els.usernameInput.value;
+    if (state.authMode === "register") {
+      payload.username = els.usernameInput.value;
+      if (state.emailVerificationPending) payload.code = els.verificationCodeInput.value;
+    }
+
+    const response = await api(path, { method: "POST", body: payload, skipAuth: true });
+    if (response.verificationRequired) {
+      showEmailVerificationStep(response.email);
+      return;
+    }
+
+    if (response.error) {
+      els.authError.textContent = response.error;
+      return;
+    }
+
+    resetEmailVerificationStep();
+    setSession(response.token, response.user);
+    await enterApp();
+  } finally {
+    els.authSubmit.disabled = false;
   }
+});
 
-  const response = await api(path, { method: "POST", body: payload, skipAuth: true });
-  if (response.error) {
-    els.authError.textContent = response.error;
-    return;
-  }
-
-  setSession(response.token, response.user);
-  await enterApp();
+[els.usernameInput, els.emailInput, els.passwordInput].forEach((input) => {
+  input.addEventListener("input", () => {
+    if (state.emailVerificationPending) resetEmailVerificationStep();
+  });
 });
 
 els.profileForm.addEventListener("submit", async (event) => {
@@ -96,7 +117,7 @@ els.profileForm.addEventListener("submit", async (event) => {
       displayName: els.displayNameInput.value,
       status: els.statusInput.value,
       color: state.color,
-      avatar: (els.displayNameInput.value || state.user?.displayName || "NC").slice(0, 2)
+      avatar: (els.displayNameInput.value || state.user?.displayName || "K").slice(0, 2)
     }
   });
 
@@ -203,12 +224,31 @@ function setSession(token, user) {
 
 function setAuthMode(mode) {
   state.authMode = mode;
+  resetEmailVerificationStep();
   els.loginTab.classList.toggle("active", mode === "login");
   els.registerTab.classList.toggle("active", mode === "register");
   els.usernameLabel.hidden = mode !== "register";
   els.usernameInput.required = mode === "register";
   els.authSubmit.textContent = mode === "register" ? "Создать аккаунт" : "Войти";
   els.passwordInput.autocomplete = mode === "register" ? "new-password" : "current-password";
+}
+
+function showEmailVerificationStep(email) {
+  state.emailVerificationPending = true;
+  els.verificationCodeLabel.hidden = false;
+  els.verificationCodeInput.required = true;
+  els.verificationCodeInput.value = "";
+  els.authSubmit.textContent = "Подтвердить код";
+  els.authError.textContent = `Код отправлен на ${email}.`;
+  els.verificationCodeInput.focus();
+}
+
+function resetEmailVerificationStep() {
+  state.emailVerificationPending = false;
+  els.verificationCodeLabel.hidden = true;
+  els.verificationCodeInput.required = false;
+  els.verificationCodeInput.value = "";
+  els.authSubmit.textContent = state.authMode === "register" ? "Создать аккаунт" : "Войти";
 }
 
 async function api(path, options = {}) {

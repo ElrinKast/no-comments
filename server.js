@@ -4,6 +4,7 @@ import { Server } from "socket.io";
 import crypto from "node:crypto";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { isMailerConfigured, sendVerificationCode } from "./src/mailer.js";
 import {
   addChannelMessage,
   channelExists,
@@ -15,15 +16,85 @@ import {
   getUserByToken,
   getWorkspace,
   publicUser,
-  updateUserProfile
+  updateUserProfile,
+  validateNewUser
 } from "./src/store.js";
 
 const PORT = Number(process.env.PORT || 3000);
 const MAX_HISTORY = 80;
+const EMAIL_CODE_TTL_MS = 10 * 60 * 1000;
+const EMAIL_CODE_RESEND_MS = 60 * 1000;
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DEFAULT_ICE_SERVERS = [{ urls: "stun:stun.l.google.com:19302" }];
 
 const channelMembers = new Map();
+const pendingEmailCodes = new Map();
+
+function verificationSecret() {
+  return process.env.EMAIL_CODE_SECRET || process.env.SMTP_PASSWORD || "kolink-local-email-code-secret";
+}
+
+function createEmailCode() {
+  return String(crypto.randomInt(100000, 1000000));
+}
+
+function hashEmailCode(email, code) {
+  return crypto.createHash("sha256").update(`${email}:${code}:${verificationSecret()}`).digest("hex");
+}
+
+function pruneEmailCodes() {
+  const now = Date.now();
+  for (const [email, pending] of pendingEmailCodes) {
+    if (pending.expiresAt <= now) pendingEmailCodes.delete(email);
+  }
+}
+
+async function sendRegistrationCode(payload) {
+  const user = await validateNewUser(payload);
+  pruneEmailCodes();
+
+  if (!isMailerConfigured()) {
+    const error = new Error("Почта для отправки кодов еще не настроена.");
+    error.statusCode = 503;
+    throw error;
+  }
+
+  const existing = pendingEmailCodes.get(user.email);
+  const now = Date.now();
+  if (existing && now - existing.sentAt < EMAIL_CODE_RESEND_MS) {
+    return { email: user.email, resent: false };
+  }
+
+  const code = createEmailCode();
+  pendingEmailCodes.set(user.email, {
+    codeHash: hashEmailCode(user.email, code),
+    attempts: 0,
+    sentAt: now,
+    expiresAt: now + EMAIL_CODE_TTL_MS
+  });
+  await sendVerificationCode({ to: user.email, code });
+  return { email: user.email, resent: Boolean(existing) };
+}
+
+function verifyRegistrationCode(email, code) {
+  pruneEmailCodes();
+  const cleanCode = String(code || "").trim();
+  const pending = pendingEmailCodes.get(email);
+  if (!pending) return false;
+
+  pending.attempts += 1;
+  if (pending.attempts > 5) {
+    pendingEmailCodes.delete(email);
+    return false;
+  }
+
+  const expected = Buffer.from(pending.codeHash, "hex");
+  const actual = Buffer.from(hashEmailCode(email, cleanCode), "hex");
+  if (expected.length !== actual.length || !crypto.timingSafeEqual(expected, actual)) return false;
+
+  pendingEmailCodes.delete(email);
+  return true;
+}
 
 function iceServers() {
   if (!process.env.TURN_URL) return DEFAULT_ICE_SERVERS;
@@ -94,11 +165,28 @@ function attachApi(app) {
 
   app.post("/api/auth/register", async (req, res) => {
     try {
+      const cleanUser = await validateNewUser(req.body);
+      const code = String(req.body.code || "").trim();
+      if (!code) {
+        const verification = await sendRegistrationCode(req.body);
+        res.status(202).json({
+          verificationRequired: true,
+          email: verification.email,
+          resent: verification.resent
+        });
+        return;
+      }
+
+      if (!verifyRegistrationCode(cleanUser.email, code)) {
+        res.status(400).json({ error: "Неверный или устаревший код подтверждения." });
+        return;
+      }
+
       const user = await createUser(req.body);
       const session = await createSession({ email: req.body.email, password: req.body.password });
       res.status(201).json({ token: session.token, user });
     } catch (error) {
-      res.status(400).json({ error: error.message });
+      res.status(error.statusCode || 400).json({ error: error.message });
     }
   });
 

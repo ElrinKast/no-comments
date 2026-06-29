@@ -10,22 +10,27 @@
     <main id="authScreen" class="auth-screen">
       <section class="auth-panel">
         <div class="brand">
-          <div class="brand-mark">NC</div>
+          <div class="brand-mark">K</div>
           <div>
             <h1>Kolink</h1>
-            <p>Голос, чат и свои серверы</p>
+            <p>Открытое пространство для чата, голоса и своих сообществ</p>
           </div>
         </div>
 
+        <div class="auth-intro">
+          <strong>Регистрация открыта для всех</strong>
+          <span>Создайте аккаунт без приглашения и сразу заходите в общий сервер.</span>
+        </div>
+
         <div class="auth-tabs">
-          <button id="loginTab" class="active" type="button">Вход</button>
-          <button id="registerTab" type="button">Регистрация</button>
+          <button id="registerTab" class="active" type="button">Регистрация</button>
+          <button id="loginTab" type="button">Вход</button>
         </div>
 
         <form id="authForm" class="auth-form">
-          <label id="usernameLabel" hidden>
+          <label id="usernameLabel">
             Никнейм
-            <input id="usernameInput" autocomplete="username" maxlength="28" />
+            <input id="usernameInput" autocomplete="username" maxlength="28" required />
           </label>
           <label>
             Email
@@ -33,9 +38,13 @@
           </label>
           <label>
             Пароль
-            <input id="passwordInput" type="password" autocomplete="current-password" minlength="8" required />
+            <input id="passwordInput" type="password" autocomplete="new-password" minlength="8" required />
           </label>
-          <button id="authSubmit" class="primary-action" type="submit">Войти</button>
+          <label id="verificationCodeLabel" hidden>
+            Код из письма
+            <input id="verificationCodeInput" inputmode="numeric" maxlength="6" pattern="[0-9]*" autocomplete="one-time-code" />
+          </label>
+          <button id="authSubmit" class="primary-action" type="submit">Создать аккаунт</button>
           <p id="authError" class="error-text" role="alert"></p>
         </form>
       </section>
@@ -48,7 +57,7 @@
 
       <aside class="sidebar" aria-label="Каналы и профиль">
         <section class="brand compact">
-          <div class="brand-mark">NC</div>
+          <div class="brand-mark">K</div>
           <div>
             <h1>Kolink</h1>
             <p id="serverLabel">Сервер</p>
@@ -109,7 +118,7 @@
           <div id="videoGrid" class="video-grid">
             <div class="empty-call">
               <strong>Звонок пока пуст</strong>
-              <span>Нажмите “Позвонить”, чтобы зайти в голос.</span>
+              <span>Нажмите "Позвонить", чтобы зайти в голос.</span>
             </div>
           </div>
         </section>

@@ -1,6 +1,6 @@
 # Kolink
 
-Аналог Discord в разработке: регистрация, вход, серверы, каналы, чат, профили, звонки и демонстрация экрана.
+Аналог Discord в разработке: регистрация с email-кодом, вход, серверы, каналы, чат, профили, звонки и демонстрация экрана.
 
 ## Запуск
 
@@ -56,9 +56,23 @@ TURN_PASSWORD=strong-password
 TURN_REALM=your-domain.example
 ```
 
+## Email-коды
+
+Для регистрации через код настройте SMTP в `.env`:
+
+```bash
+EMAIL_CODE_SECRET=random-secret
+SMTP_HOST=smtp.example.com
+SMTP_PORT=587
+SMTP_SECURE=false
+SMTP_USER=noreply@example.com
+SMTP_PASSWORD=app-password
+SMTP_FROM=Kolink <noreply@example.com>
+```
+
 ## Что уже есть
 
-- регистрация и вход по email/паролю;
+- регистрация с подтверждением email-кодом и вход по email/паролю;
 - сессии через токены;
 - JSON-хранилище в `data/db.json`;
 - базовая модель серверов и каналов;

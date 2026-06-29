@@ -99,7 +99,7 @@ async function verifyPassword(password, storedHash) {
   return expected.length === key.length && crypto.timingSafeEqual(expected, key);
 }
 
-export async function createUser({ username, email, password }) {
+export async function validateNewUser({ username, email, password }) {
   const store = await ensureDb();
   const cleanUsername = normalizeUsername(username);
   const cleanEmail = normalizeEmail(email);
@@ -123,15 +123,22 @@ export async function createUser({ username, email, password }) {
     throw new Error("Пользователь с таким именем или email уже есть.");
   }
 
+  return { username: cleanUsername, email: cleanEmail, password: String(password || "") };
+}
+
+export async function createUser({ username, email, password }) {
+  const store = await ensureDb();
+  const cleanUser = await validateNewUser({ username, email, password });
+
   const user = {
     id: crypto.randomUUID(),
-    username: cleanUsername,
-    displayName: cleanUsername,
-    email: cleanEmail,
-    passwordHash: await hashPassword(password),
+    username: cleanUser.username,
+    displayName: cleanUser.username,
+    email: cleanUser.email,
+    passwordHash: await hashPassword(cleanUser.password),
     status: "В сети",
     color: "#4f8cff",
-    avatar: cleanUsername.slice(0, 2).toUpperCase(),
+    avatar: cleanUser.username.slice(0, 2).toUpperCase(),
     createdAt: new Date().toISOString()
   };
 

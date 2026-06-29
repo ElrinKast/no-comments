@@ -74,6 +74,26 @@ input:disabled {
   gap: 8px;
 }
 
+.auth-intro {
+  display: grid;
+  gap: 4px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  background: #151820;
+}
+
+.auth-intro strong {
+  color: var(--text);
+  font-size: 15px;
+}
+
+.auth-intro span {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
 .auth-tabs button,
 .secondary-action,
 .ghost-action,
