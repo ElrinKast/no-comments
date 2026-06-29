@@ -242,7 +242,7 @@ function connectSocket() {
     if (state.inCall) {
       for (const user of users) {
         if (user.id !== state.selfId && user.inCall && !state.peers.has(user.id)) {
-          createPeer(user.id, shouldInitiatePeer(user.id));
+          createPeer(user.id, false);
         }
       }
     }
@@ -251,7 +251,7 @@ function connectSocket() {
   socket.on("chat:message", addMessage);
   socket.on("system:notice", addNotice);
   socket.on("call:user-joined", ({ id }) => {
-    if (state.inCall && id !== state.selfId) createPeer(id, shouldInitiatePeer(id));
+    if (state.inCall && id !== state.selfId) createPeer(id, true);
   });
   socket.on("call:user-left", ({ id }) => removePeer(id));
   socket.on("signal:offer", handleOffer);
@@ -319,14 +319,14 @@ async function joinCall() {
     state.cameraEnabled = media.video;
     setLocalCameraEnabled(state.cameraEnabled);
     addVideoTile(state.selfId, state.localStream, media.video ? "Вы" : "Вы · только голос");
-    socket.emit("call:join");
+    socket.emit("call:join", { cameraOn: state.cameraEnabled, sharingScreen: false });
     els.callButton.textContent = "Выйти";
     els.callButton.classList.add("active");
     updateCameraButton();
     if (!media.video) addNotice("Камера недоступна, вы вошли в звонок с микрофоном.");
 
     for (const user of state.users.values()) {
-      if (user.id !== state.selfId && user.inCall) createPeer(user.id, shouldInitiatePeer(user.id));
+      if (user.id !== state.selfId && user.inCall) createPeer(user.id, false);
     }
   } catch (error) {
     addNotice(mediaErrorMessage(error));
@@ -376,6 +376,7 @@ async function toggleCamera() {
   if (!state.screenStream) {
     await setOutboundVideoTrack(state.cameraEnabled ? cameraTrack : null);
   }
+  socket?.emit("call:media", { cameraOn: state.cameraEnabled });
   updateLocalVideoTile();
   updateCameraButton();
 }
@@ -511,6 +512,9 @@ async function setOutboundVideoTrack(track) {
     }
   }
   await Promise.allSettled(replacements);
+  for (const [id, peer] of state.peers) {
+    if (peer._shouldOffer) queuePeerNegotiation(id, peer);
+  }
 }
 
 async function renegotiatePeer(id, peer) {
@@ -556,19 +560,40 @@ function getVideoSender(peer) {
   return peer._videoSender;
 }
 
-function shouldInitiatePeer(id) {
-  return state.selfId > id;
+function queuePeerNegotiation(id, peer) {
+  if (!peer._shouldOffer || peer._queuedOffer || peer.signalingState === "closed") return;
+  peer._queuedOffer = true;
+  queueMicrotask(async () => {
+    peer._queuedOffer = false;
+    try {
+      await renegotiatePeer(id, peer);
+    } catch (error) {
+      addNotice("Не удалось обновить медиа-соединение. Попробуйте перезайти в звонок.");
+      console.error(error);
+    }
+  });
 }
 
-function createPeer(id, politeOffer) {
-  if (state.peers.has(id)) return state.peers.get(id);
+function createPeer(id, shouldOffer) {
+  if (state.peers.has(id)) {
+    const peer = state.peers.get(id);
+    if (shouldOffer && !peer._shouldOffer) {
+      peer._shouldOffer = true;
+      queuePeerNegotiation(id, peer);
+    }
+    return peer;
+  }
 
   const peer = new RTCPeerConnection({ iceServers: state.iceServers });
-  peer._shouldOffer = politeOffer;
+  peer._shouldOffer = shouldOffer;
   peer._makingOffer = false;
   peer._ignoreOffer = false;
+  peer._queuedOffer = false;
   state.peers.set(id, peer);
-  addOutboundTransceivers(peer);
+
+  peer.onnegotiationneeded = async () => {
+    if (peer._shouldOffer) await renegotiatePeer(id, peer);
+  };
 
   peer.onicecandidate = (event) => {
     if (event.candidate) socket.emit("signal:ice", { to: id, candidate: event.candidate });
@@ -593,20 +618,23 @@ function createPeer(id, politeOffer) {
     if (["failed", "disconnected", "closed"].includes(peer.connectionState)) removePeer(id);
   };
 
-  if (politeOffer) {
-    peer.onnegotiationneeded = async () => {
-      await renegotiatePeer(id, peer);
-    };
-  }
+  addOutboundTransceivers(peer);
+  if (shouldOffer) queuePeerNegotiation(id, peer);
 
   return peer;
 }
 
 async function handleOffer({ from, description }) {
-  const peer = createPeer(from, shouldInitiatePeer(from));
-  const offerCollision = peer._makingOffer || peer.signalingState !== "stable";
-  peer._ignoreOffer = offerCollision && peer._shouldOffer;
-  if (peer._ignoreOffer) return;
+  const peer = createPeer(from, false);
+  peer._shouldOffer = false;
+
+  if (peer.signalingState !== "stable") {
+    try {
+      await peer.setLocalDescription({ type: "rollback" });
+    } catch (error) {
+      console.warn(error);
+    }
+  }
 
   await peer.setRemoteDescription(description);
   const answer = await peer.createAnswer();
@@ -672,28 +700,38 @@ function syncRemoteVideoTiles(users) {
 function addVideoTile(id, stream, label) {
   document.querySelector(".empty-call")?.remove();
   let tile = document.querySelector(`[data-video-id="${CSS.escape(id)}"]`);
-  const hasVideo = hasDisplayableVideo(stream);
+  const hasVideo = hasDisplayableVideo(id, stream);
 
   if (!tile) {
     tile = document.createElement("article");
     tile.className = "video-tile";
     tile.dataset.videoId = id;
-    tile.innerHTML = `<video autoplay playsinline></video><div class="audio-only-tile">VOICE</div><span class="video-label"></span>`;
+    tile.innerHTML = `<video autoplay playsinline></video><audio autoplay playsinline></audio><div class="audio-only-tile">VOICE</div><span class="video-label"></span>`;
     els.videoGrid.append(tile);
   }
 
   const video = tile.querySelector("video");
-  video.srcObject = stream;
-  video.muted = id === state.selfId;
+  video.srcObject = new MediaStream(stream?.getVideoTracks() || []);
+  video.muted = true;
   video.hidden = !hasVideo;
   video.play?.().catch(() => {});
+  const audio = tile.querySelector("audio");
+  audio.srcObject = new MediaStream(id === state.selfId ? [] : stream?.getAudioTracks() || []);
+  audio.muted = id === state.selfId;
+  audio.play?.().catch(() => {});
   tile.querySelector(".audio-only-tile").hidden = hasVideo;
   tile.querySelector(".video-label").textContent = label;
 }
 
-function hasDisplayableVideo(stream) {
+function hasDisplayableVideo(id, stream) {
+  const mediaState = id === state.selfId
+    ? { cameraOn: state.cameraEnabled, sharingScreen: Boolean(state.screenStream) }
+    : state.users.get(id);
+  const hasKnownMediaState = typeof mediaState?.cameraOn === "boolean" || typeof mediaState?.sharingScreen === "boolean";
+  if (hasKnownMediaState && !mediaState.cameraOn && !mediaState.sharingScreen) return false;
+
   return stream?.getVideoTracks().some((track) => {
-    return track.readyState === "live" && track.enabled !== false && !track.muted;
+    return track.readyState === "live" && track.enabled !== false;
   }) || false;
 }
 

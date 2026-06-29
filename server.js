@@ -56,6 +56,7 @@ function channelUsers(channelId) {
     color: member.user.color,
     avatar: member.user.avatar,
     inCall: member.inCall,
+    cameraOn: member.cameraOn,
     sharingScreen: member.sharingScreen
   }));
 }
@@ -168,6 +169,7 @@ function attachRealtime(io) {
         channelId,
         user,
         inCall: false,
+        cameraOn: false,
         sharingScreen: false
       };
 
@@ -216,11 +218,13 @@ function attachRealtime(io) {
       io.to(member.channelId).emit("chat:message", message);
     });
 
-    socket.on("call:join", () => {
+    socket.on("call:join", (media = {}) => {
       const member = socket.data.member;
       if (!member) return;
 
       member.inCall = true;
+      member.cameraOn = Boolean(media.cameraOn);
+      member.sharingScreen = Boolean(media.sharingScreen);
       socket.to(member.channelId).emit("call:user-joined", { id: member.socketId });
       emitPresence(io, member.channelId);
     });
@@ -230,8 +234,18 @@ function attachRealtime(io) {
       if (!member) return;
 
       member.inCall = false;
+      member.cameraOn = false;
       member.sharingScreen = false;
       socket.to(member.channelId).emit("call:user-left", { id: member.socketId });
+      emitPresence(io, member.channelId);
+    });
+
+    socket.on("call:media", (media = {}) => {
+      const member = socket.data.member;
+      if (!member) return;
+
+      if (Object.hasOwn(media, "cameraOn")) member.cameraOn = Boolean(media.cameraOn);
+      if (Object.hasOwn(media, "sharingScreen")) member.sharingScreen = Boolean(media.sharingScreen);
       emitPresence(io, member.channelId);
     });
 
