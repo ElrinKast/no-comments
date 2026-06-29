@@ -251,7 +251,7 @@ function connectSocket() {
   socket.on("chat:message", addMessage);
   socket.on("system:notice", addNotice);
   socket.on("call:user-joined", ({ id }) => {
-    if (state.inCall && id !== state.selfId) createPeer(id, true);
+    if (state.inCall && id !== state.selfId) createPeer(id, shouldInitiatePeer(id));
   });
   socket.on("call:user-left", ({ id }) => removePeer(id));
   socket.on("signal:offer", handleOffer);
@@ -326,7 +326,7 @@ async function joinCall() {
     if (!media.video) addNotice("Камера недоступна, вы вошли в звонок с микрофоном.");
 
     for (const user of state.users.values()) {
-      if (user.id !== state.selfId && user.inCall) createPeer(user.id, false);
+      if (user.id !== state.selfId && user.inCall) createPeer(user.id, shouldInitiatePeer(user.id));
     }
   } catch (error) {
     addNotice(mediaErrorMessage(error));
@@ -568,11 +568,6 @@ function createPeer(id, politeOffer) {
   peer._makingOffer = false;
   peer._ignoreOffer = false;
   state.peers.set(id, peer);
-
-  peer.onnegotiationneeded = async () => {
-    if (peer._shouldOffer) await renegotiatePeer(id, peer);
-  };
-
   addOutboundTransceivers(peer);
 
   peer.onicecandidate = (event) => {
@@ -598,7 +593,11 @@ function createPeer(id, politeOffer) {
     if (["failed", "disconnected", "closed"].includes(peer.connectionState)) removePeer(id);
   };
 
-  if (politeOffer) queueMicrotask(() => renegotiatePeer(id, peer));
+  if (politeOffer) {
+    peer.onnegotiationneeded = async () => {
+      await renegotiatePeer(id, peer);
+    };
+  }
 
   return peer;
 }
@@ -679,36 +678,23 @@ function addVideoTile(id, stream, label) {
     tile = document.createElement("article");
     tile.className = "video-tile";
     tile.dataset.videoId = id;
-    tile.innerHTML = `<video autoplay playsinline muted></video><audio autoplay playsinline></audio><div class="audio-only-tile">VOICE</div><span class="video-label"></span>`;
+    tile.innerHTML = `<video autoplay playsinline></video><div class="audio-only-tile">VOICE</div><span class="video-label"></span>`;
     els.videoGrid.append(tile);
   }
 
   const video = tile.querySelector("video");
-  const audio = tile.querySelector("audio");
   video.srcObject = stream;
-  video.muted = true;
+  video.muted = id === state.selfId;
   video.hidden = !hasVideo;
   video.play?.().catch(() => {});
-  if (id === state.selfId) {
-    audio.srcObject = null;
-  } else {
-    audio.srcObject = getAudioOnlyStream(stream);
-    audio.muted = false;
-    audio.play?.().catch(() => {});
-  }
   tile.querySelector(".audio-only-tile").hidden = hasVideo;
   tile.querySelector(".video-label").textContent = label;
 }
 
 function hasDisplayableVideo(stream) {
   return stream?.getVideoTracks().some((track) => {
-    return track.readyState === "live" && track.enabled !== false;
+    return track.readyState === "live" && track.enabled !== false && !track.muted;
   }) || false;
-}
-
-function getAudioOnlyStream(stream) {
-  const audioTracks = stream?.getAudioTracks() || [];
-  return audioTracks.length ? new MediaStream(audioTracks) : null;
 }
 
 function renderVideoEmptyState() {
