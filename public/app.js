@@ -533,15 +533,45 @@ function addOutboundTransceivers(peer) {
   const audioTrack = state.localStream?.getAudioTracks()[0] || null;
   const videoTrack = getCurrentVideoTrack();
 
-  const audioTransceiver = audioTrack
-    ? peer.addTransceiver(audioTrack, { direction: "sendrecv", streams: [state.localStream] })
-    : peer.addTransceiver("audio", { direction: "sendrecv" });
-  const videoTransceiver = videoTrack
-    ? peer.addTransceiver(videoTrack, { direction: "sendrecv", streams: [getCurrentVideoStream()] })
-    : peer.addTransceiver("video", { direction: "sendrecv" });
+  const audio = ensureOutboundTransceiver(peer, "audio", audioTrack, state.localStream);
+  const video = ensureOutboundTransceiver(peer, "video", videoTrack, getCurrentVideoStream());
 
-  peer._audioSender = audioTransceiver.sender;
-  peer._videoSender = videoTransceiver.sender;
+  peer._audioSender = audio.transceiver.sender;
+  peer._videoSender = video.transceiver.sender;
+
+  return Promise.allSettled([audio.replacement, video.replacement]);
+}
+
+function ensureOutboundTransceiver(peer, kind, track, stream) {
+  let transceiver = getOutboundTransceiver(peer, kind);
+  if (!transceiver) {
+    transceiver = track
+      ? peer.addTransceiver(track, { direction: "sendrecv", streams: stream ? [stream] : [] })
+      : peer.addTransceiver(kind, { direction: "sendrecv" });
+    if (kind === "audio") peer._audioTransceiver = transceiver;
+    if (kind === "video") peer._videoTransceiver = transceiver;
+    return { transceiver, replacement: Promise.resolve() };
+  }
+
+  transceiver.direction = "sendrecv";
+  if (kind === "audio") peer._audioTransceiver = transceiver;
+  if (kind === "video") peer._videoTransceiver = transceiver;
+  return {
+    transceiver,
+    replacement: transceiver.sender.track === track ? Promise.resolve() : transceiver.sender.replaceTrack(track)
+  };
+}
+
+function getOutboundTransceiver(peer, kind) {
+  const cached = kind === "audio" ? peer._audioTransceiver : peer._videoTransceiver;
+  if (cached && peer.getTransceivers().includes(cached)) return cached;
+
+  const transceiver = peer.getTransceivers().find((item) => {
+    return item.sender.track?.kind === kind || item.receiver.track?.kind === kind;
+  });
+  if (kind === "audio") peer._audioTransceiver = transceiver || null;
+  if (kind === "video") peer._videoTransceiver = transceiver || null;
+  return transceiver || null;
 }
 
 function getCurrentVideoTrack() {
@@ -579,6 +609,7 @@ function createPeer(id, shouldOffer) {
     const peer = state.peers.get(id);
     if (shouldOffer && !peer._shouldOffer) {
       peer._shouldOffer = true;
+      addOutboundTransceivers(peer);
       queuePeerNegotiation(id, peer);
     }
     return peer;
@@ -618,8 +649,10 @@ function createPeer(id, shouldOffer) {
     if (["failed", "disconnected", "closed"].includes(peer.connectionState)) removePeer(id);
   };
 
-  addOutboundTransceivers(peer);
-  if (shouldOffer) queuePeerNegotiation(id, peer);
+  if (shouldOffer) {
+    addOutboundTransceivers(peer);
+    queuePeerNegotiation(id, peer);
+  }
 
   return peer;
 }
@@ -637,6 +670,7 @@ async function handleOffer({ from, description }) {
   }
 
   await peer.setRemoteDescription(description);
+  await addOutboundTransceivers(peer);
   const answer = await peer.createAnswer();
   await peer.setLocalDescription(answer);
   socket.emit("signal:answer", { to: from, description: peer.localDescription });
