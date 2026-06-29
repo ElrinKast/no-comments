@@ -568,6 +568,13 @@ function createPeer(id, politeOffer) {
   peer._makingOffer = false;
   peer._ignoreOffer = false;
   state.peers.set(id, peer);
+
+  if (politeOffer) {
+    peer.onnegotiationneeded = async () => {
+      await renegotiatePeer(id, peer);
+    };
+  }
+
   addOutboundTransceivers(peer);
 
   peer.onicecandidate = (event) => {
@@ -593,11 +600,7 @@ function createPeer(id, politeOffer) {
     if (["failed", "disconnected", "closed"].includes(peer.connectionState)) removePeer(id);
   };
 
-  if (politeOffer) {
-    peer.onnegotiationneeded = async () => {
-      await renegotiatePeer(id, peer);
-    };
-  }
+  if (politeOffer) queueMicrotask(() => renegotiatePeer(id, peer));
 
   return peer;
 }
@@ -693,7 +696,7 @@ function addVideoTile(id, stream, label) {
 
 function hasDisplayableVideo(stream) {
   return stream?.getVideoTracks().some((track) => {
-    return track.readyState === "live" && track.enabled !== false && !track.muted;
+    return track.readyState === "live" && track.enabled !== false;
   }) || false;
 }
 
