@@ -617,6 +617,7 @@ async function startScreenShare() {
     els.screenButton.classList.add("active");
     els.screenButton.textContent = "stop";
     socket.emit("call:screen", true);
+    socket.emit("call:media", { sharingScreen: true });
     screenTrack.addEventListener("ended", stopScreenShare, { once: true });
   } catch (error) {
     addNotice(screenShareErrorMessage(error));
@@ -665,6 +666,7 @@ async function stopScreenShare(options = {}) {
   els.screenButton.classList.remove("active");
   els.screenButton.textContent = "screen";
   socket?.emit("call:screen", false);
+  socket?.emit("call:media", { sharingScreen: false });
 }
 
 async function setOutboundVideoTrack(track) {
@@ -805,7 +807,7 @@ function createPeer(id, shouldOffer) {
     if (!stream.getTracks().some((track) => track.id === event.track.id)) {
       stream.addTrack(event.track);
     }
-    addVideoTile(id, stream, user?.name || "Друг");
+    addVideoTile(id, stream, videoLabelForUser(user));
     event.track.addEventListener("ended", () => {
       stream.removeTrack(event.track);
       refreshRemoteVideoTile(id);
@@ -883,7 +885,7 @@ function refreshRemoteVideoTile(id) {
     renderVideoEmptyState();
     return;
   }
-  addVideoTile(id, stream, user?.name || "Друг");
+  addVideoTile(id, stream, videoLabelForUser(user));
 }
 
 function syncRemoteVideoTiles(users) {
@@ -896,8 +898,13 @@ function syncRemoteVideoTiles(users) {
     if (user.id === state.selfId || !user.inCall) continue;
 
     const stream = state.remoteStreams.get(user.id);
-    if (stream) addVideoTile(user.id, stream, user.name || "Друг");
+    if (stream) addVideoTile(user.id, stream, videoLabelForUser(user));
   }
+}
+
+function videoLabelForUser(user) {
+  if (!user) return "Друг";
+  return user.sharingScreen ? `${user.name || "Друг"} показывает экран` : user.name || "Друг";
 }
 
 function addVideoTile(id, stream, label) {
