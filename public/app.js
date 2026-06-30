@@ -829,6 +829,7 @@ function createPeer(id, shouldOffer) {
   peer._ignoreOffer = false;
   peer._queuedOffer = false;
   peer._disconnectTimer = null;
+  peer._pendingIce = [];
   state.peers.set(id, peer);
 
   peer.onnegotiationneeded = async () => {
@@ -904,6 +905,7 @@ async function handleOffer({ from, description }) {
   }
 
   await peer.setRemoteDescription(description);
+  await flushPendingIce(peer);
   await addOutboundTransceivers(peer);
   const answer = await peer.createAnswer();
   await peer.setLocalDescription(answer);
@@ -912,12 +914,36 @@ async function handleOffer({ from, description }) {
 
 async function handleAnswer({ from, description }) {
   const peer = state.peers.get(from);
-  if (peer) await peer.setRemoteDescription(description);
+  if (!peer) return;
+
+  await peer.setRemoteDescription(description);
+  await flushPendingIce(peer);
 }
 
 async function handleIce({ from, candidate }) {
-  const peer = state.peers.get(from);
-  if (!peer || !candidate || peer._ignoreOffer) return;
+  if (!candidate) return;
+
+  const peer = state.peers.get(from) || createPeer(from, false);
+  if (peer._ignoreOffer) return;
+
+  if (!peer.remoteDescription) {
+    peer._pendingIce.push(candidate);
+    return;
+  }
+
+  await addIceCandidate(peer, candidate);
+}
+
+async function flushPendingIce(peer) {
+  if (!peer._pendingIce?.length) return;
+
+  const pending = peer._pendingIce.splice(0);
+  for (const candidate of pending) {
+    await addIceCandidate(peer, candidate);
+  }
+}
+
+async function addIceCandidate(peer, candidate) {
   try {
     await peer.addIceCandidate(candidate);
   } catch (error) {
