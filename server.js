@@ -32,6 +32,15 @@ const DEFAULT_ICE_SERVERS = [{ urls: "stun:stun.l.google.com:19302" }];
 const channelMembers = new Map();
 const pendingEmailCodes = new Map();
 
+function boolEnv(value, fallback = false) {
+  if (value === undefined || value === "") return fallback;
+  return ["1", "true", "yes", "on"].includes(String(value).toLowerCase());
+}
+
+function emailVerificationEnabled() {
+  return boolEnv(process.env.EMAIL_VERIFICATION_ENABLED, false);
+}
+
 function verificationSecret() {
   return process.env.EMAIL_CODE_SECRET || process.env.SMTP_PASSWORD || "kolink-local-email-code-secret";
 }
@@ -168,20 +177,22 @@ function attachApi(app) {
   app.post("/api/auth/register", async (req, res) => {
     try {
       const cleanUser = await validateNewUser(req.body);
-      const code = String(req.body.code || "").trim();
-      if (!code) {
-        const verification = await sendRegistrationCode(req.body);
-        res.status(202).json({
-          verificationRequired: true,
-          email: verification.email,
-          resent: verification.resent
-        });
-        return;
-      }
+      if (emailVerificationEnabled()) {
+        const code = String(req.body.code || "").trim();
+        if (!code) {
+          const verification = await sendRegistrationCode(req.body);
+          res.status(202).json({
+            verificationRequired: true,
+            email: verification.email,
+            resent: verification.resent
+          });
+          return;
+        }
 
-      if (!verifyRegistrationCode(cleanUser.email, code)) {
-        res.status(400).json({ error: "Неверный или устаревший код подтверждения." });
-        return;
+        if (!verifyRegistrationCode(cleanUser.email, code)) {
+          res.status(400).json({ error: "Неверный или устаревший код подтверждения." });
+          return;
+        }
       }
 
       const user = await createUser(req.body);
