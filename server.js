@@ -12,10 +12,12 @@ import {
   createUser,
   DEFAULT_CHANNEL_ID,
   deleteSession,
+  deleteUser,
   getChannelMessages,
   getUserByToken,
   getWorkspace,
   publicUser,
+  updateUserAccount,
   updateUserProfile,
   validateNewUser
 } from "./src/store.js";
@@ -210,6 +212,23 @@ function attachApi(app) {
   app.patch("/api/me", requireAuth, async (req, res) => {
     try {
       res.json({ user: await updateUserProfile(req.user.id, req.body) });
+    } catch (error) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  app.patch("/api/account", requireAuth, async (req, res) => {
+    try {
+      res.json({ user: await updateUserAccount(req.user.id, req.body) });
+    } catch (error) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  app.delete("/api/account", requireAuth, async (req, res) => {
+    try {
+      await deleteUser(req.user.id, req.body || {});
+      res.json({ ok: true });
     } catch (error) {
       res.status(400).json({ error: error.message });
     }

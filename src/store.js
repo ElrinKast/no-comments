@@ -68,6 +68,7 @@ function publicUser(user) {
   return {
     id: user.id,
     username: user.username,
+    email: user.email,
     displayName: user.displayName,
     status: user.status,
     color: user.color,
@@ -194,6 +195,80 @@ export async function updateUserProfile(userId, profile) {
   user.avatar = String(profile.avatar || user.avatar).trim().slice(0, 2).toUpperCase() || user.avatar;
   await saveDb();
   return publicUser(user);
+}
+
+export async function updateUserAccount(userId, account) {
+  const store = await ensureDb();
+  const user = store.users.find((item) => item.id === userId);
+  if (!user) throw new Error("Пользователь не найден.");
+
+  if (!(await verifyPassword(account.currentPassword, user.passwordHash))) {
+    throw new Error("Введите текущий пароль.");
+  }
+
+  const cleanUsername = normalizeUsername(account.username || user.username);
+  const cleanEmail = normalizeEmail(account.email || user.email);
+  const newPassword = String(account.newPassword || "");
+
+  if (cleanUsername.length < 3) {
+    throw new Error("Имя должно быть минимум 3 символа.");
+  }
+
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
+    throw new Error("Введите корректный email.");
+  }
+
+  if (newPassword && newPassword.length < 8) {
+    throw new Error("Новый пароль должен быть минимум 8 символов.");
+  }
+
+  const taken = store.users.some((item) => {
+    if (item.id === userId) return false;
+    return item.username.toLowerCase() === cleanUsername.toLowerCase() || item.email === cleanEmail;
+  });
+  if (taken) {
+    throw new Error("Пользователь с таким именем или email уже есть.");
+  }
+
+  const oldUsername = user.username;
+  user.username = cleanUsername;
+  user.email = cleanEmail;
+
+  if (!user.displayName || user.displayName === oldUsername) {
+    user.displayName = cleanUsername;
+  }
+
+  if (!user.avatar || user.avatar === oldUsername.slice(0, 2).toUpperCase()) {
+    user.avatar = cleanUsername.slice(0, 2).toUpperCase();
+  }
+
+  if (newPassword) {
+    user.passwordHash = await hashPassword(newPassword);
+  }
+
+  await saveDb();
+  return publicUser(user);
+}
+
+export async function deleteUser(userId, { currentPassword }) {
+  const store = await ensureDb();
+  const user = store.users.find((item) => item.id === userId);
+  if (!user) throw new Error("Пользователь не найден.");
+
+  if (!(await verifyPassword(currentPassword, user.passwordHash))) {
+    throw new Error("Введите текущий пароль.");
+  }
+
+  store.users = store.users.filter((item) => item.id !== userId);
+  store.sessions = store.sessions.filter((session) => session.userId !== userId);
+
+  for (const server of store.servers) {
+    if (server.ownerId === userId) {
+      server.ownerId = store.users[0]?.id || null;
+    }
+  }
+
+  await saveDb();
 }
 
 export async function getWorkspace() {

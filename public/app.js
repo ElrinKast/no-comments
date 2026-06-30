@@ -18,6 +18,25 @@ const els = {
   displayNameInput: document.querySelector("#displayNameInput"),
   statusInput: document.querySelector("#statusInput"),
   profileError: document.querySelector("#profileError"),
+  accountSettingsButton: document.querySelector("#accountSettingsButton"),
+  accountModal: document.querySelector("#accountModal"),
+  accountCloseButton: document.querySelector("#accountCloseButton"),
+  accountTabs: document.querySelectorAll("[data-account-tab]"),
+  accountTabPanel: document.querySelector("#accountTabPanel"),
+  deleteTabPanel: document.querySelector("#deleteTabPanel"),
+  accountAvatar: document.querySelector("#accountAvatar"),
+  accountDisplayName: document.querySelector("#accountDisplayName"),
+  accountEmailText: document.querySelector("#accountEmailText"),
+  accountForm: document.querySelector("#accountForm"),
+  accountUsernameInput: document.querySelector("#accountUsernameInput"),
+  accountEmailInput: document.querySelector("#accountEmailInput"),
+  accountNewPasswordInput: document.querySelector("#accountNewPasswordInput"),
+  accountCurrentPasswordInput: document.querySelector("#accountCurrentPasswordInput"),
+  accountError: document.querySelector("#accountError"),
+  deleteAccountForm: document.querySelector("#deleteAccountForm"),
+  deletePasswordInput: document.querySelector("#deletePasswordInput"),
+  deleteConfirmInput: document.querySelector("#deleteConfirmInput"),
+  deleteAccountError: document.querySelector("#deleteAccountError"),
   logoutButton: document.querySelector("#logoutButton"),
   channelList: document.querySelector("#channelList"),
   peopleList: document.querySelector("#peopleList"),
@@ -130,14 +149,83 @@ els.profileForm.addEventListener("submit", async (event) => {
   socket.emit("profile:update", response.user);
 });
 
+els.accountSettingsButton.addEventListener("click", () => openAccountModal());
+els.accountCloseButton.addEventListener("click", () => closeAccountModal());
+els.accountModal.addEventListener("click", (event) => {
+  if (event.target === els.accountModal) closeAccountModal();
+});
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && !els.accountModal.hidden) closeAccountModal();
+});
+
+els.accountTabs.forEach((button) => {
+  button.addEventListener("click", () => setAccountTab(button.dataset.accountTab));
+});
+
+els.accountForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  els.accountError.textContent = "";
+
+  const response = await api("/api/account", {
+    method: "PATCH",
+    body: {
+      username: els.accountUsernameInput.value,
+      email: els.accountEmailInput.value,
+      newPassword: els.accountNewPasswordInput.value,
+      currentPassword: els.accountCurrentPasswordInput.value
+    }
+  });
+
+  if (response.error) {
+    els.accountError.textContent = response.error;
+    return;
+  }
+
+  state.user = response.user;
+  els.accountNewPasswordInput.value = "";
+  els.accountCurrentPasswordInput.value = "";
+  hydrateProfile();
+  hydrateAccountModal();
+  socket?.emit("profile:update", response.user);
+  els.accountError.textContent = "Изменения сохранены.";
+});
+
+els.deleteAccountForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  els.deleteAccountError.textContent = "";
+
+  if (els.deleteConfirmInput.value.trim() !== "УДАЛИТЬ") {
+    els.deleteAccountError.textContent = "Введите УДАЛИТЬ для подтверждения.";
+    return;
+  }
+
+  const response = await api("/api/account", {
+    method: "DELETE",
+    body: {
+      currentPassword: els.deletePasswordInput.value
+    }
+  });
+
+  if (response.error) {
+    els.deleteAccountError.textContent = response.error;
+    return;
+  }
+
+  closeAccountModal();
+  leaveCall();
+  socket?.disconnect();
+  clearSession();
+  els.authScreen.hidden = false;
+  els.appShell.hidden = true;
+  setAuthMode("register");
+  els.authError.textContent = "Аккаунт удален.";
+});
+
 els.logoutButton.addEventListener("click", async () => {
   await api("/api/auth/logout", { method: "POST" });
   leaveCall();
   socket?.disconnect();
-  localStorage.removeItem("kolinkToken");
-  localStorage.removeItem("noCommentsToken");
-  state.token = "";
-  state.user = null;
+  clearSession();
   els.authScreen.hidden = false;
   els.appShell.hidden = true;
 });
@@ -222,6 +310,13 @@ function setSession(token, user) {
   localStorage.removeItem("noCommentsToken");
 }
 
+function clearSession() {
+  localStorage.removeItem("kolinkToken");
+  localStorage.removeItem("noCommentsToken");
+  state.token = "";
+  state.user = null;
+}
+
 function setAuthMode(mode) {
   state.authMode = mode;
   resetEmailVerificationStep();
@@ -249,6 +344,40 @@ function resetEmailVerificationStep() {
   els.verificationCodeInput.required = false;
   els.verificationCodeInput.value = "";
   els.authSubmit.textContent = state.authMode === "register" ? "Создать аккаунт" : "Войти";
+}
+
+function openAccountModal() {
+  hydrateAccountModal();
+  setAccountTab("account");
+  els.accountModal.hidden = false;
+  els.accountUsernameInput.focus();
+}
+
+function closeAccountModal() {
+  els.accountModal.hidden = true;
+  els.accountError.textContent = "";
+  els.deleteAccountError.textContent = "";
+  els.accountCurrentPasswordInput.value = "";
+  els.accountNewPasswordInput.value = "";
+  els.deletePasswordInput.value = "";
+  els.deleteConfirmInput.value = "";
+}
+
+function hydrateAccountModal() {
+  const user = state.user || {};
+  els.accountAvatar.textContent = user.avatar || "K";
+  els.accountAvatar.style.background = user.color || state.color;
+  els.accountDisplayName.textContent = user.displayName || user.username || "Kolink";
+  els.accountEmailText.textContent = user.email || "";
+  els.accountUsernameInput.value = user.username || "";
+  els.accountEmailInput.value = user.email || "";
+}
+
+function setAccountTab(tab) {
+  const isDelete = tab === "delete";
+  els.accountTabs.forEach((button) => button.classList.toggle("active", button.dataset.accountTab === tab));
+  els.accountTabPanel.hidden = isDelete;
+  els.deleteTabPanel.hidden = !isDelete;
 }
 
 async function api(path, options = {}) {

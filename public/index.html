@@ -87,6 +87,7 @@
             <button class="swatch" type="button" data-color="#f0a43c" aria-label="Оранжевый"></button>
           </div>
           <button class="secondary-action" type="submit">Сохранить профиль</button>
+          <button id="accountSettingsButton" class="secondary-action" type="button">Моя учетная запись</button>
           <button id="logoutButton" class="ghost-action" type="button">Выйти</button>
           <p id="profileError" class="error-text" role="alert"></p>
         </form>
@@ -133,7 +134,78 @@
       </section>
     </main>
 
+    <div id="accountModal" class="modal-backdrop" hidden>
+      <section class="settings-modal" role="dialog" aria-modal="true" aria-labelledby="accountModalTitle">
+        <aside class="settings-nav">
+          <h2>Настройки</h2>
+          <button class="settings-tab active" type="button" data-account-tab="account">Моя учетная запись</button>
+          <button class="settings-tab danger-tab" type="button" data-account-tab="delete">Удаление аккаунта</button>
+        </aside>
+
+        <div class="settings-content">
+          <header class="settings-header">
+            <div>
+              <p class="eyebrow">Профиль Kolink</p>
+              <h2 id="accountModalTitle">Моя учетная запись</h2>
+            </div>
+            <button id="accountCloseButton" class="icon-button" type="button" title="Закрыть">x</button>
+          </header>
+
+          <section id="accountTabPanel" class="settings-panel">
+            <div class="account-card">
+              <div id="accountAvatar" class="avatar">K</div>
+              <div>
+                <strong id="accountDisplayName">Kolink</strong>
+                <span id="accountEmailText">email@example.com</span>
+              </div>
+            </div>
+
+            <form id="accountForm" class="settings-form">
+              <label>
+                Имя пользователя
+                <input id="accountUsernameInput" maxlength="28" autocomplete="username" required />
+              </label>
+              <label>
+                Email
+                <input id="accountEmailInput" type="email" autocomplete="email" required />
+              </label>
+              <label>
+                Новый пароль
+                <input id="accountNewPasswordInput" type="password" autocomplete="new-password" minlength="8" placeholder="Оставьте пустым, если не меняете" />
+              </label>
+              <label>
+                Текущий пароль
+                <input id="accountCurrentPasswordInput" type="password" autocomplete="current-password" required />
+              </label>
+              <button class="primary-action" type="submit">Сохранить изменения</button>
+              <p id="accountError" class="error-text" role="alert"></p>
+            </form>
+          </section>
+
+          <section id="deleteTabPanel" class="settings-panel" hidden>
+            <div class="danger-zone">
+              <h3>Удалить учетную запись</h3>
+              <p>Аккаунт, сессии и доступ к профилю будут удалены. Чтобы подтвердить действие, введите текущий пароль и слово УДАЛИТЬ.</p>
+              <form id="deleteAccountForm" class="settings-form">
+                <label>
+                  Текущий пароль
+                  <input id="deletePasswordInput" type="password" autocomplete="current-password" required />
+                </label>
+                <label>
+                  Подтверждение
+                  <input id="deleteConfirmInput" autocomplete="off" placeholder="УДАЛИТЬ" required />
+                </label>
+                <button class="danger-action" type="submit">Удалить аккаунт</button>
+                <p id="deleteAccountError" class="error-text" role="alert"></p>
+              </form>
+            </div>
+          </section>
+        </div>
+      </section>
+    </div>
+
     <script src="/socket.io/socket.io.js"></script>
     <script src="/app.js" type="module"></script>
   </body>
 </html>
+
