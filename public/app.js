@@ -399,6 +399,12 @@ function connectSocket() {
   socket?.disconnect();
   socket = io({ auth: { token: state.token } });
 
+  socket.on("connect", () => {
+    if (state.user && !els.appShell.hidden && state.selfId) {
+      joinChannel(state.channelId, { preserveCall: true, silent: true });
+    }
+  });
+
   socket.on("connect_error", () => {
     els.profileError.textContent = "Не удалось подключиться к realtime-серверу.";
   });
@@ -428,8 +434,9 @@ function connectSocket() {
   socket.on("signal:ice", handleIce);
 }
 
-function joinChannel(channelId) {
-  if (state.inCall) leaveCall();
+function joinChannel(channelId, options = {}) {
+  const { preserveCall = false, silent = false } = options;
+  if (state.inCall && !preserveCall) leaveCall();
   state.channelId = channelId;
   const channel = state.channels.find((item) => item.id === channelId);
   els.roomLabel.textContent = `# ${channel?.name || channelId}`;
@@ -444,10 +451,15 @@ function joinChannel(channelId) {
 
     state.selfId = response.selfId;
     state.channelId = response.channelId;
+    state.users = new Map(response.users.map((user) => [user.id, user]));
     els.messages.replaceChildren();
     response.messages.forEach(addMessage);
     renderPeople(response.users);
-    addNotice("Вы вошли в канал");
+    if (!silent) addNotice("Вы вошли в канал");
+
+    if (preserveCall && state.inCall) {
+      socket.emit("call:join", { cameraOn: state.cameraEnabled, sharingScreen: Boolean(state.screenStream) });
+    }
   });
 }
 
