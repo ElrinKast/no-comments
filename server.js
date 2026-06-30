@@ -147,6 +147,43 @@ function emitPresence(io, channelId) {
   io.to(channelId).emit("presence:update", channelUsers(channelId));
 }
 
+function joinSocketChannel(io, socket, channelId, user, options = {}) {
+  const { silent = false } = options;
+  const existingMember = socket.data.member;
+  if (existingMember?.channelId === channelId) {
+    existingMember.user = user;
+    getChannel(channelId).set(socket.id, existingMember);
+    emitPresence(io, channelId);
+    return existingMember;
+  }
+
+  if (existingMember) {
+    const oldChannel = getChannel(existingMember.channelId);
+    oldChannel.delete(socket.id);
+    socket.leave(existingMember.channelId);
+    emitPresence(io, existingMember.channelId);
+  }
+
+  const member = {
+    socketId: socket.id,
+    channelId,
+    user,
+    inCall: false,
+    cameraOn: false,
+    sharingScreen: false
+  };
+
+  socket.data.member = member;
+  socket.join(channelId);
+  getChannel(channelId).set(socket.id, member);
+
+  if (!silent) {
+    socket.to(channelId).emit("system:notice", `${user.displayName} подключился`);
+  }
+  emitPresence(io, channelId);
+  return member;
+}
+
 function requireAuth(req, res, next) {
   const header = req.get("authorization") || "";
   const token = header.replace(/^Bearer\s+/i, "");
@@ -248,6 +285,12 @@ function attachApi(app) {
   app.get("/api/workspace", requireAuth, async (_req, res) => {
     res.json(await getWorkspace());
   });
+
+  app.get("/api/presence", requireAuth, async (req, res) => {
+    const requestedChannel = String(req.query.channelId || DEFAULT_CHANNEL_ID).trim();
+    const channelId = (await channelExists(requestedChannel)) ? requestedChannel : DEFAULT_CHANNEL_ID;
+    res.json({ users: channelUsers(channelId) });
+  });
 }
 
 function attachRealtime(io) {
@@ -265,6 +308,8 @@ function attachRealtime(io) {
   });
 
   io.on("connection", (socket) => {
+    joinSocketChannel(io, socket, DEFAULT_CHANNEL_ID, socket.data.user, { silent: true });
+
     socket.on("room:join", async (payload = {}, ack) => {
       const requestedChannel = String(payload.channelId || payload.roomId || DEFAULT_CHANNEL_ID).trim();
       const channelId = (await channelExists(requestedChannel)) ? requestedChannel : DEFAULT_CHANNEL_ID;
@@ -275,25 +320,7 @@ function attachRealtime(io) {
         return;
       }
 
-      if (socket.data.member) {
-        const oldChannel = getChannel(socket.data.member.channelId);
-        oldChannel.delete(socket.id);
-        socket.leave(socket.data.member.channelId);
-        emitPresence(io, socket.data.member.channelId);
-      }
-
-      const member = {
-        socketId: socket.id,
-        channelId,
-        user,
-        inCall: false,
-        cameraOn: false,
-        sharingScreen: false
-      };
-
-      socket.data.member = member;
-      socket.join(channelId);
-      getChannel(channelId).set(socket.id, member);
+      joinSocketChannel(io, socket, channelId, user);
 
       ack?.({
         ok: true,
@@ -302,9 +329,6 @@ function attachRealtime(io) {
         messages: await getChannelMessages(channelId, MAX_HISTORY),
         users: channelUsers(channelId)
       });
-
-      socket.to(channelId).emit("system:notice", `${user.displayName} подключился`);
-      emitPresence(io, channelId);
     });
 
     socket.on("profile:update", async (profile = {}) => {

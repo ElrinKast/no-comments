@@ -66,6 +66,7 @@ const state = {
   channels: [],
   color: "#4f8cff",
   users: new Map(),
+  presenceTimer: null,
   peers: new Map(),
   remoteStreams: new Map(),
   localStream: null,
@@ -214,6 +215,7 @@ els.deleteAccountForm.addEventListener("submit", async (event) => {
   closeAccountModal();
   leaveCall();
   socket?.disconnect();
+  stopPresencePolling();
   clearSession();
   els.authScreen.hidden = false;
   els.appShell.hidden = true;
@@ -225,6 +227,7 @@ els.logoutButton.addEventListener("click", async () => {
   await api("/api/auth/logout", { method: "POST" });
   leaveCall();
   socket?.disconnect();
+  stopPresencePolling();
   clearSession();
   els.authScreen.hidden = false;
   els.appShell.hidden = true;
@@ -301,6 +304,7 @@ async function enterApp() {
 
   connectSocket();
   joinChannel(state.channelId);
+  startPresencePolling();
 }
 
 function setSession(token, user) {
@@ -410,9 +414,7 @@ function connectSocket() {
   });
 
   socket.on("presence:update", (users) => {
-    state.users = new Map(users.map((user) => [user.id, user]));
-    renderPeople(users);
-    syncRemoteVideoTiles(users);
+    applyPresence(users);
 
     if (state.inCall) {
       for (const user of users) {
@@ -434,6 +436,30 @@ function connectSocket() {
   socket.on("signal:ice", handleIce);
 }
 
+function applyPresence(users = []) {
+  state.users = new Map(users.map((user) => [user.id, user]));
+  renderPeople(users);
+  syncRemoteVideoTiles(users);
+}
+
+function startPresencePolling() {
+  stopPresencePolling();
+  state.presenceTimer = window.setInterval(refreshPresence, 5000);
+}
+
+function stopPresencePolling() {
+  if (!state.presenceTimer) return;
+  window.clearInterval(state.presenceTimer);
+  state.presenceTimer = null;
+}
+
+async function refreshPresence() {
+  if (!state.token || els.appShell.hidden) return;
+
+  const response = await api(`/api/presence?channelId=${encodeURIComponent(state.channelId)}`);
+  if (!response.error) applyPresence(response.users);
+}
+
 function joinChannel(channelId, options = {}) {
   const { preserveCall = false, silent = false } = options;
   if (state.inCall && !preserveCall) leaveCall();
@@ -451,10 +477,9 @@ function joinChannel(channelId, options = {}) {
 
     state.selfId = response.selfId;
     state.channelId = response.channelId;
-    state.users = new Map(response.users.map((user) => [user.id, user]));
     els.messages.replaceChildren();
     response.messages.forEach(addMessage);
-    renderPeople(response.users);
+    applyPresence(response.users);
     if (!silent) addNotice("Вы вошли в канал");
 
     if (preserveCall && state.inCall) {
