@@ -32,5 +32,10 @@ services:
       - --lt-cred-mech
       - --user=${TURN_USER:-kolink}:${TURN_PASSWORD:-change-me}
       - --realm=${TURN_REALM:-kolink.local}
+      - --external-ip=${TURN_EXTERNAL_IP:-127.0.0.1}
+      - --min-port=${TURN_MIN_PORT:-49160}
+      - --max-port=${TURN_MAX_PORT:-49200}
+      - --no-tls
+      - --no-dtls
       - --no-cli
     restart: unless-stopped
