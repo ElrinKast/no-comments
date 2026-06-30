@@ -419,7 +419,7 @@ function connectSocket() {
     if (state.inCall) {
       for (const user of users) {
         if (user.id !== state.selfId && user.inCall && !state.peers.has(user.id)) {
-          createPeer(user.id, false);
+          createPeer(user.id, shouldOfferPeer(user.id));
         }
       }
     }
@@ -532,7 +532,7 @@ async function joinCall() {
     if (!media.video) addNotice("Камера недоступна, вы вошли в звонок с микрофоном.");
 
     for (const user of state.users.values()) {
-      if (user.id !== state.selfId && user.inCall) createPeer(user.id, false);
+      if (user.id !== state.selfId && user.inCall) createPeer(user.id, shouldOfferPeer(user.id));
     }
   } catch (error) {
     addNotice(mediaErrorMessage(error));
@@ -828,6 +828,7 @@ function createPeer(id, shouldOffer) {
   peer._makingOffer = false;
   peer._ignoreOffer = false;
   peer._queuedOffer = false;
+  peer._disconnectTimer = null;
   state.peers.set(id, peer);
 
   peer.onnegotiationneeded = async () => {
@@ -854,7 +855,28 @@ function createPeer(id, shouldOffer) {
   };
 
   peer.onconnectionstatechange = () => {
-    if (["failed", "disconnected", "closed"].includes(peer.connectionState)) removePeer(id);
+    if (peer.connectionState === "connected") {
+      clearPeerDisconnectTimer(peer);
+      return;
+    }
+
+    if (peer.connectionState === "disconnected") {
+      clearPeerDisconnectTimer(peer);
+      peer._disconnectTimer = window.setTimeout(() => {
+        if (peer.connectionState === "disconnected") {
+          removePeer(id);
+          if (state.inCall && state.users.get(id)?.inCall) createPeer(id, shouldOfferPeer(id));
+        }
+      }, 5000);
+      return;
+    }
+
+    if (["failed", "closed"].includes(peer.connectionState)) {
+      removePeer(id);
+      if (peer.connectionState === "failed" && state.inCall && state.users.get(id)?.inCall) {
+        createPeer(id, shouldOfferPeer(id));
+      }
+    }
   };
 
   if (shouldOffer) {
@@ -863,6 +885,10 @@ function createPeer(id, shouldOffer) {
   }
 
   return peer;
+}
+
+function shouldOfferPeer(id) {
+  return Boolean(state.selfId && id && state.selfId.localeCompare(id) < 0);
 }
 
 async function handleOffer({ from, description }) {
@@ -900,11 +926,21 @@ async function handleIce({ from, candidate }) {
 }
 
 function removePeer(id) {
-  state.peers.get(id)?.close();
+  const peer = state.peers.get(id);
+  if (peer) {
+    clearPeerDisconnectTimer(peer);
+    peer.close();
+  }
   state.peers.delete(id);
   state.remoteStreams.delete(id);
   document.querySelector(`[data-video-id="${CSS.escape(id)}"]`)?.remove();
   renderVideoEmptyState();
+}
+
+function clearPeerDisconnectTimer(peer) {
+  if (!peer?._disconnectTimer) return;
+  window.clearTimeout(peer._disconnectTimer);
+  peer._disconnectTimer = null;
 }
 
 function getRemoteStream(id) {
