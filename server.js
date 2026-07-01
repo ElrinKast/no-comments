@@ -110,10 +110,16 @@ function verifyRegistrationCode(email, code) {
 function iceServers() {
   if (!process.env.TURN_URL) return DEFAULT_ICE_SERVERS;
 
+  const turnUrls = [
+    process.env.TURN_URL,
+    process.env.TURN_URL.includes("?") ? "" : `${process.env.TURN_URL}?transport=udp`,
+    process.env.TURN_URL.includes("?") ? "" : `${process.env.TURN_URL}?transport=tcp`
+  ].filter(Boolean);
+
   return [
     ...DEFAULT_ICE_SERVERS,
     {
-      urls: process.env.TURN_URL,
+      urls: [...new Set(turnUrls)],
       username: process.env.TURN_USER || "",
       credential: process.env.TURN_PASSWORD || ""
     }
