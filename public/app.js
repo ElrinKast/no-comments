@@ -451,7 +451,7 @@ function connectSocket() {
     applyPresence(users);
 
     if (state.inCall) {
-      for (const user of users) {
+      for (const user of state.users.values()) {
         if (user.id !== state.selfId && user.inCall && !state.peers.has(user.id)) {
           createPeer(user.id, shouldOfferPeer(user.id));
         }
@@ -471,9 +471,34 @@ function connectSocket() {
 }
 
 function applyPresence(users = []) {
-  state.users = new Map(users.map((user) => [user.id, user]));
-  renderPeople(users);
-  syncRemoteVideoTiles(users);
+  const visibleUsers = normalizePresence(users);
+  state.users = new Map(visibleUsers.map((user) => [user.id, user]));
+  renderPeople(visibleUsers);
+  syncRemoteVideoTiles(visibleUsers);
+}
+
+function normalizePresence(users = []) {
+  const byAccount = new Map();
+  const selfUserId = state.user?.id;
+
+  for (const user of users) {
+    const accountId = user.userId || user.id;
+    const current = byAccount.get(accountId);
+    if (!current || shouldReplacePresenceUser(current, user, selfUserId)) {
+      byAccount.set(accountId, user);
+    }
+  }
+
+  return [...byAccount.values()];
+}
+
+function shouldReplacePresenceUser(current, next, selfUserId) {
+  if (selfUserId && next.userId === selfUserId && next.id === state.selfId) return true;
+  if (selfUserId && current.userId === selfUserId && current.id === state.selfId) return false;
+  if (next.inCall !== current.inCall) return Boolean(next.inCall);
+  if (next.sharingScreen !== current.sharingScreen) return Boolean(next.sharingScreen);
+  if (next.cameraOn !== current.cameraOn) return Boolean(next.cameraOn);
+  return true;
 }
 
 function startPresencePolling() {

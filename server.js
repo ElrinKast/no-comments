@@ -153,10 +153,28 @@ function emitPresence(io, channelId) {
   io.to(channelId).emit("presence:update", channelUsers(channelId));
 }
 
+function removeDuplicateUserMembers(io, channelId, userId, currentSocketId) {
+  const channel = getChannel(channelId);
+  for (const [socketId, member] of channel.entries()) {
+    if (socketId === currentSocketId || member.user.id !== userId) continue;
+
+    channel.delete(socketId);
+    const staleSocket = io.sockets.sockets.get(socketId);
+    staleSocket?.leave(channelId);
+    if (staleSocket?.data.member?.channelId === channelId) {
+      staleSocket.data.member = null;
+    }
+    if (member.inCall) {
+      io.to(channelId).emit("call:user-left", { id: socketId });
+    }
+  }
+}
+
 function joinSocketChannel(io, socket, channelId, user, options = {}) {
   const { silent = false } = options;
   const existingMember = socket.data.member;
   if (existingMember?.channelId === channelId) {
+    removeDuplicateUserMembers(io, channelId, user.id, socket.id);
     existingMember.user = user;
     getChannel(channelId).set(socket.id, existingMember);
     emitPresence(io, channelId);
@@ -169,6 +187,8 @@ function joinSocketChannel(io, socket, channelId, user, options = {}) {
     socket.leave(existingMember.channelId);
     emitPresence(io, existingMember.channelId);
   }
+
+  removeDuplicateUserMembers(io, channelId, user.id, socket.id);
 
   const member = {
     socketId: socket.id,
