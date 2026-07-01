@@ -544,7 +544,6 @@ async function joinCall() {
     for (const user of state.users.values()) {
       if (user.id !== state.selfId && user.inCall) createPeer(user.id, shouldOfferPeer(user.id));
     }
-    syncOutboundMedia();
   } catch (error) {
     addNotice(mediaErrorMessage(error));
   }
@@ -856,8 +855,6 @@ function createPeer(id, shouldOffer) {
       peer._shouldOffer = true;
       addOutboundTransceivers(peer);
       queuePeerNegotiation(id, peer);
-    } else {
-      syncOutboundMedia();
     }
     return peer;
   }
