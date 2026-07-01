@@ -439,7 +439,16 @@ export function startServer(port = PORT) {
   });
 
   attachApi(app);
-  app.use(express.static(join(__dirname, "public")));
+  app.use(express.static(join(__dirname, "public"), {
+    setHeaders(res, filePath) {
+      if (filePath.endsWith("index.html")) {
+        res.setHeader("Cache-Control", "no-store");
+        return;
+      }
+
+      res.setHeader("Cache-Control", "public, max-age=0, must-revalidate");
+    }
+  }));
   attachRealtime(io);
 
   return new Promise((resolve) => {
