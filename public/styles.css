@@ -510,6 +510,17 @@ select {
   font-size: 12px;
 }
 
+.person.speaking .avatar,
+.video-tile.speaking {
+  border-color: var(--success);
+  box-shadow: 0 0 0 1px rgba(34, 160, 107, 0.55), var(--shadow);
+}
+
+.voice-badge:not([hidden]) {
+  border-color: rgba(34, 160, 107, 0.45);
+  color: #8ff0bd;
+}
+
 .workspace {
   display: grid;
   grid-template-rows: auto minmax(260px, 1fr) minmax(260px, 38vh);
@@ -629,10 +640,10 @@ video {
   letter-spacing: 0;
 }
 
-.video-label {
+.video-label,
+.voice-label,
+.connection-label {
   position: absolute;
-  left: 10px;
-  bottom: 10px;
   max-width: calc(100% - 20px);
   overflow: hidden;
   border-radius: 999px;
@@ -642,6 +653,40 @@ video {
   font-size: 13px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.video-label {
+  left: 10px;
+  bottom: 10px;
+}
+
+.voice-label {
+  top: 10px;
+  left: 10px;
+  background: rgba(34, 160, 107, 0.84);
+  font-weight: 800;
+}
+
+.video-tile.muted .voice-label {
+  background: rgba(226, 85, 85, 0.84);
+}
+
+.connection-label {
+  top: 10px;
+  right: 10px;
+  color: #d7dce8;
+}
+
+.connection-label[data-tone="ok"] {
+  background: rgba(34, 160, 107, 0.72);
+}
+
+.connection-label[data-tone="relay"] {
+  background: rgba(79, 140, 255, 0.72);
+}
+
+.connection-label[data-tone="warn"] {
+  background: rgba(226, 85, 85, 0.82);
 }
 
 .chat-panel {

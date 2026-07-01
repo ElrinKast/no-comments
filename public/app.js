@@ -72,6 +72,13 @@ const state = {
   presenceTimer: null,
   peers: new Map(),
   remoteStreams: new Map(),
+  speakingUsers: new Set(),
+  voiceAnalysers: new Map(),
+  connectionStates: new Map(),
+  connectionWarnings: new Set(),
+  voiceTimer: null,
+  connectionTimer: null,
+  audioContext: null,
   localStream: null,
   screenStream: null,
   inCall: false,
@@ -268,6 +275,8 @@ els.muteButton.addEventListener("click", () => {
   }
   els.muteButton.classList.toggle("active", state.muted);
   els.muteButton.textContent = state.muted ? "muted" : "mic";
+  updateVoiceState(state.selfId, false);
+  updateParticipantIndicators(state.selfId);
 });
 
 els.cameraButton.addEventListener("click", () => {
@@ -550,6 +559,8 @@ async function joinCall() {
     state.cameraEnabled = media.video;
     setLocalCameraEnabled(state.cameraEnabled);
     addVideoTile(state.selfId, state.localStream, media.video ? "Вы" : "Вы · только голос");
+    startVoiceActivity(state.selfId, state.localStream);
+    startConnectionDiagnostics();
     socket.emit("call:join", { cameraOn: state.cameraEnabled, sharingScreen: false });
     els.callButton.textContent = "Выйти";
     els.callButton.classList.add("active");
@@ -656,6 +667,7 @@ function leaveCall() {
   state.inCall = false;
   state.muted = false;
   state.cameraEnabled = false;
+  stopCallDiagnostics();
   els.callButton.textContent = "Позвонить";
   els.callButton.classList.remove("active");
   els.muteButton.classList.remove("active");
@@ -760,6 +772,146 @@ function setDeviceControlsDisabled(disabled) {
   els.audioDeviceSelect.disabled = disabled;
   els.videoDeviceSelect.disabled = disabled;
   updateOutputDeviceSupport();
+}
+
+function ensureAudioContext() {
+  if (!state.audioContext) {
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextClass) return null;
+    state.audioContext = new AudioContextClass();
+  }
+
+  if (state.audioContext.state === "suspended") state.audioContext.resume?.().catch(() => {});
+  return state.audioContext;
+}
+
+function startVoiceActivity(id, stream) {
+  const audioTrack = stream?.getAudioTracks?.()[0];
+  if (!id || !audioTrack) return;
+
+  stopVoiceActivity(id);
+  const audioContext = ensureAudioContext();
+  if (!audioContext) return;
+
+  try {
+    const source = audioContext.createMediaStreamSource(new MediaStream([audioTrack]));
+    const analyser = audioContext.createAnalyser();
+    analyser.fftSize = 512;
+    source.connect(analyser);
+    state.voiceAnalysers.set(id, {
+      analyser,
+      source,
+      samples: new Uint8Array(analyser.fftSize),
+      lastActiveAt: 0
+    });
+    startVoiceLoop();
+  } catch (error) {
+    console.warn(error);
+  }
+}
+
+function stopVoiceActivity(id) {
+  const entry = state.voiceAnalysers.get(id);
+  if (entry) {
+    try {
+      entry.source.disconnect();
+    } catch (error) {
+      console.warn(error);
+    }
+  }
+  state.voiceAnalysers.delete(id);
+  updateVoiceState(id, false);
+  if (!state.voiceAnalysers.size) stopVoiceLoop();
+}
+
+function startVoiceLoop() {
+  if (state.voiceTimer) return;
+
+  state.voiceTimer = window.setInterval(() => {
+    const now = performance.now();
+    for (const [id, entry] of state.voiceAnalysers) {
+      entry.analyser.getByteTimeDomainData(entry.samples);
+      let total = 0;
+      for (const sample of entry.samples) {
+        const centered = (sample - 128) / 128;
+        total += centered * centered;
+      }
+      const level = Math.sqrt(total / entry.samples.length);
+      const isLocalMuted = id === state.selfId && state.muted;
+      if (!isLocalMuted && level > 0.035) entry.lastActiveAt = now;
+      updateVoiceState(id, !isLocalMuted && now - entry.lastActiveAt < 450);
+    }
+  }, 120);
+}
+
+function stopVoiceLoop() {
+  if (!state.voiceTimer) return;
+  window.clearInterval(state.voiceTimer);
+  state.voiceTimer = null;
+}
+
+function updateVoiceState(id, speaking) {
+  if (!id) return;
+  const changed = speaking ? !state.speakingUsers.has(id) : state.speakingUsers.has(id);
+  if (speaking) state.speakingUsers.add(id);
+  else state.speakingUsers.delete(id);
+  if (changed) updateParticipantIndicators(id);
+}
+
+function startConnectionDiagnostics() {
+  if (state.connectionTimer) return;
+
+  state.connectionTimer = window.setInterval(updateConnectionDiagnostics, 2000);
+  updateConnectionDiagnostics();
+}
+
+function stopCallDiagnostics() {
+  stopVoiceLoop();
+  for (const id of [...state.voiceAnalysers.keys()]) stopVoiceActivity(id);
+  state.speakingUsers.clear();
+  state.connectionStates.clear();
+  state.connectionWarnings.clear();
+  if (state.connectionTimer) {
+    window.clearInterval(state.connectionTimer);
+    state.connectionTimer = null;
+  }
+}
+
+async function updateConnectionDiagnostics() {
+  if (!state.inCall) return;
+
+  await Promise.allSettled(
+    [...state.peers.entries()].map(async ([id, peer]) => {
+      if (peer.connectionState === "closed") return;
+
+      const stats = [...(await peer.getStats()).values()];
+      const pair = stats.find((item) => item.type === "candidate-pair" && item.state === "succeeded" && (item.selected || item.nominated))
+        || stats.find((item) => item.type === "candidate-pair" && item.state === "succeeded");
+      const local = pair ? stats.find((item) => item.id === pair.localCandidateId) : null;
+      const remote = pair ? stats.find((item) => item.id === pair.remoteCandidateId) : null;
+      const previous = state.connectionStates.get(id) || { bytesReceived: 0, lastBytesAt: performance.now() };
+      const bytesReceived = pair?.bytesReceived || 0;
+      const hasNewBytes = bytesReceived > previous.bytesReceived;
+      const lastBytesAt = hasNewBytes ? performance.now() : previous.lastBytesAt;
+      const relay = local?.candidateType === "relay" || remote?.candidateType === "relay";
+      const unstable = ["failed", "disconnected"].includes(peer.connectionState)
+        || ["failed", "disconnected"].includes(peer.iceConnectionState)
+        || performance.now() - lastBytesAt > 7000;
+      const next = {
+        label: unstable ? "нестабильно" : relay ? "relay" : "соединение",
+        tone: unstable ? "warn" : relay ? "relay" : "ok",
+        bytesReceived,
+        lastBytesAt
+      };
+
+      state.connectionStates.set(id, next);
+      updateParticipantIndicators(id);
+      if (unstable && !state.connectionWarnings.has(id)) {
+        state.connectionWarnings.add(id);
+        addNotice("Соединение нестабильно: если звук или видео пропали, обновите страницу и проверьте TURN/порты.");
+      }
+    })
+  );
 }
 
 async function startScreenShare() {
@@ -973,8 +1125,10 @@ function createPeer(id, shouldOffer) {
       stream.addTrack(event.track);
     }
     addVideoTile(id, stream, videoLabelForUser(user));
+    if (event.track.kind === "audio") startVoiceActivity(id, stream);
     event.track.addEventListener("ended", () => {
       stream.removeTrack(event.track);
+      if (event.track.kind === "audio") stopVoiceActivity(id);
       refreshRemoteVideoTile(id);
     });
     event.track.addEventListener("mute", () => refreshRemoteVideoTile(id));
@@ -1085,6 +1239,9 @@ function removePeer(id) {
   }
   state.peers.delete(id);
   state.remoteStreams.delete(id);
+  stopVoiceActivity(id);
+  state.connectionStates.delete(id);
+  state.connectionWarnings.delete(id);
   document.querySelector(`[data-video-id="${CSS.escape(id)}"]`)?.remove();
   renderVideoEmptyState();
 }
@@ -1123,7 +1280,7 @@ function syncRemoteVideoTiles(users) {
     if (user.id === state.selfId || !user.inCall) continue;
 
     const stream = state.remoteStreams.get(user.id);
-    if (stream) addVideoTile(user.id, stream, videoLabelForUser(user));
+    if (stream || user.sharingScreen) addVideoTile(user.id, stream || new MediaStream(), videoLabelForUser(user));
   }
 }
 
@@ -1141,7 +1298,7 @@ function addVideoTile(id, stream, label) {
     tile = document.createElement("article");
     tile.className = "video-tile";
     tile.dataset.videoId = id;
-    tile.innerHTML = `<video autoplay playsinline></video><audio autoplay playsinline></audio><div class="audio-only-tile">VOICE</div><span class="video-label"></span>`;
+    tile.innerHTML = `<video autoplay playsinline></video><audio autoplay playsinline></audio><div class="audio-only-tile">VOICE</div><span class="video-label"></span><span class="voice-label"></span><span class="connection-label"></span>`;
     els.videoGrid.append(tile);
   }
 
@@ -1157,6 +1314,7 @@ function addVideoTile(id, stream, label) {
   audio.play?.().catch(() => {});
   tile.querySelector(".audio-only-tile").hidden = hasVideo;
   tile.querySelector(".video-label").textContent = label;
+  updateParticipantIndicators(id);
 }
 
 function hasDisplayableVideo(id, stream) {
@@ -1186,6 +1344,7 @@ function renderPeople(users) {
     ...users.map((user) => {
       const item = document.createElement("li");
       item.className = "person";
+      item.dataset.personId = user.id;
       item.innerHTML = `
         <div class="avatar" style="background:${escapeHtml(user.color)}">${escapeHtml(user.avatar)}</div>
         <div>
@@ -1194,12 +1353,45 @@ function renderPeople(users) {
           <div class="badges">
             ${user.inCall ? '<span class="badge">в звонке</span>' : ""}
             ${user.sharingScreen ? '<span class="badge">экран</span>' : ""}
+            <span class="badge voice-badge" hidden></span>
           </div>
         </div>
       `;
+      window.setTimeout(() => updateParticipantIndicators(user.id), 0);
       return item;
     })
   );
+}
+
+function updateParticipantIndicators(id) {
+  const speaking = state.speakingUsers.has(id);
+  const muted = id === state.selfId && state.muted;
+  const connection = state.connectionStates.get(id);
+  const tile = document.querySelector(`[data-video-id="${CSS.escape(id)}"]`);
+  if (tile) {
+    tile.classList.toggle("speaking", speaking);
+    tile.classList.toggle("muted", muted);
+    const voiceLabel = tile.querySelector(".voice-label");
+    if (voiceLabel) {
+      voiceLabel.hidden = !speaking && !muted;
+      voiceLabel.textContent = muted ? "микрофон выключен" : "говорит";
+    }
+    const connectionLabel = tile.querySelector(".connection-label");
+    if (connectionLabel) {
+      connectionLabel.hidden = !connection || id === state.selfId;
+      connectionLabel.textContent = connection?.label || "";
+      connectionLabel.dataset.tone = connection?.tone || "";
+    }
+  }
+
+  const person = document.querySelector(`[data-person-id="${CSS.escape(id)}"]`);
+  if (!person) return;
+  person.classList.toggle("speaking", speaking);
+  const voiceBadge = person.querySelector(".voice-badge");
+  if (voiceBadge) {
+    voiceBadge.hidden = !speaking && !muted;
+    voiceBadge.textContent = muted ? "микрофон выкл." : "говорит";
+  }
 }
 
 function addMessage(message) {
