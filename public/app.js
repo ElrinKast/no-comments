@@ -274,6 +274,14 @@ els.screenButton.addEventListener("click", () => {
   }
 });
 
+window.addEventListener("focus", () => {
+  if (state.inCall) syncOutboundMedia();
+});
+
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden && state.inCall) syncOutboundMedia();
+});
+
 async function boot() {
   if (!state.token) return;
 
@@ -434,6 +442,7 @@ function connectSocket() {
   socket.on("signal:offer", handleOffer);
   socket.on("signal:answer", handleAnswer);
   socket.on("signal:ice", handleIce);
+  socket.on("signal:renegotiate", handleRenegotiate);
 }
 
 function applyPresence(users = []) {
@@ -523,6 +532,7 @@ async function joinCall() {
     state.localStream = media.stream;
     state.inCall = true;
     state.cameraEnabled = media.video;
+    bindLocalTrackRecovery();
     setLocalCameraEnabled(state.cameraEnabled);
     addVideoTile(state.selfId, state.localStream, media.video ? "Вы" : "Вы · только голос");
     socket.emit("call:join", { cameraOn: state.cameraEnabled, sharingScreen: false });
@@ -534,6 +544,7 @@ async function joinCall() {
     for (const user of state.users.values()) {
       if (user.id !== state.selfId && user.inCall) createPeer(user.id, shouldOfferPeer(user.id));
     }
+    syncOutboundMedia();
   } catch (error) {
     addNotice(mediaErrorMessage(error));
   }
@@ -722,6 +733,32 @@ async function setOutboundVideoTrack(track) {
   await Promise.allSettled(replacements);
   for (const [id, peer] of state.peers) {
     if (peer._shouldOffer) queuePeerNegotiation(id, peer);
+    else requestPeerNegotiation(id);
+  }
+}
+
+async function syncOutboundMedia(options = {}) {
+  const { requestNegotiation = true } = options;
+  const updates = [];
+  for (const [id, peer] of state.peers) {
+    updates.push(addOutboundTransceivers(peer));
+    if (peer._shouldOffer) queuePeerNegotiation(id, peer);
+    else if (requestNegotiation) requestPeerNegotiation(id);
+  }
+  await Promise.allSettled(updates);
+}
+
+function requestPeerNegotiation(id) {
+  if (!state.inCall || !id || id === state.selfId) return;
+  socket?.emit("signal:renegotiate", { to: id });
+}
+
+function bindLocalTrackRecovery() {
+  for (const track of state.localStream?.getTracks() || []) {
+    if (track._kolinkRecoveryBound) continue;
+    track._kolinkRecoveryBound = true;
+    track.addEventListener("unmute", () => syncOutboundMedia());
+    track.addEventListener("ended", () => syncOutboundMedia());
   }
 }
 
@@ -819,6 +856,8 @@ function createPeer(id, shouldOffer) {
       peer._shouldOffer = true;
       addOutboundTransceivers(peer);
       queuePeerNegotiation(id, peer);
+    } else {
+      syncOutboundMedia();
     }
     return peer;
   }
@@ -910,6 +949,7 @@ async function handleOffer({ from, description }) {
   const answer = await peer.createAnswer();
   await peer.setLocalDescription(answer);
   socket.emit("signal:answer", { to: from, description: peer.localDescription });
+  syncOutboundMedia({ requestNegotiation: false });
 }
 
 async function handleAnswer({ from, description }) {
@@ -918,6 +958,7 @@ async function handleAnswer({ from, description }) {
 
   await peer.setRemoteDescription(description);
   await flushPendingIce(peer);
+  syncOutboundMedia({ requestNegotiation: false });
 }
 
 async function handleIce({ from, candidate }) {
@@ -932,6 +973,15 @@ async function handleIce({ from, candidate }) {
   }
 
   await addIceCandidate(peer, candidate);
+}
+
+async function handleRenegotiate({ from }) {
+  if (!state.inCall || !from) return;
+
+  const peer = createPeer(from, true);
+  peer._shouldOffer = true;
+  await addOutboundTransceivers(peer);
+  queuePeerNegotiation(from, peer);
 }
 
 async function flushPendingIce(peer) {
