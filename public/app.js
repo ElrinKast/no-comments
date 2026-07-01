@@ -1052,10 +1052,10 @@ async function updateConnectionDiagnostics() {
         || stats.find((item) => item.type === "candidate-pair" && item.state === "succeeded");
       const local = pair ? stats.find((item) => item.id === pair.localCandidateId) : null;
       const remote = pair ? stats.find((item) => item.id === pair.remoteCandidateId) : null;
-      const previous = state.connectionStates.get(id) || { bytesReceived: 0, lastBytesAt: performance.now() };
-      const bytesReceived = pair?.bytesReceived || 0;
-      const hasNewBytes = bytesReceived > previous.bytesReceived;
-      const lastBytesAt = hasNewBytes ? performance.now() : previous.lastBytesAt;
+      const previous = state.connectionStates.get(id) || { mediaBytesReceived: 0, lastMediaAt: performance.now() };
+      const mediaBytesReceived = receivedMediaBytes(stats);
+      const hasNewMediaBytes = mediaBytesReceived > previous.mediaBytesReceived;
+      const lastMediaAt = hasNewMediaBytes ? performance.now() : previous.lastMediaAt;
       const relay = local?.candidateType === "relay" || remote?.candidateType === "relay";
       const rttMs = typeof pair?.currentRoundTripTime === "number"
         ? Math.max(1, Math.round(pair.currentRoundTripTime * 1000))
@@ -1065,24 +1065,24 @@ async function updateConnectionDiagnostics() {
       const isConnecting = ["new", "connecting"].includes(peer.connectionState)
         || ["new", "checking"].includes(peer.iceConnectionState)
         || !pair;
-      const noIncomingData = !isConnecting && performance.now() - lastBytesAt > 7000;
-      const unstable = isFailed || isDisconnected || noIncomingData;
+      const noIncomingMedia = !isConnecting && performance.now() - lastMediaAt > 7000;
+      const unstable = isFailed || isDisconnected || noIncomingMedia;
       const label = isFailed
         ? "соединение потеряно"
         : isDisconnected
           ? "переподключение"
-          : noIncomingData
-            ? "нет входящих данных"
+          : noIncomingMedia
+            ? "нет медиа"
             : isConnecting
               ? "подключение"
               : relay
                 ? "через сервер"
                 : "прямое соединение";
       const next = {
-        label: rttMs && !unstable && !isConnecting ? `${label} · ${rttMs} мс` : label,
+        label: rttMs && !unstable && !isConnecting && mediaBytesReceived > 0 ? `${label} · ${rttMs} мс` : label,
         tone: unstable ? "warn" : relay ? "relay" : isConnecting ? "pending" : "ok",
-        bytesReceived,
-        lastBytesAt,
+        mediaBytesReceived,
+        lastMediaAt,
         rttMs
       };
 
@@ -1094,6 +1094,12 @@ async function updateConnectionDiagnostics() {
       }
     })
   );
+}
+
+function receivedMediaBytes(stats) {
+  return stats
+    .filter((item) => item.type === "inbound-rtp" && !item.isRemote && typeof item.bytesReceived === "number")
+    .reduce((total, item) => total + item.bytesReceived, 0);
 }
 
 async function startScreenShare() {
