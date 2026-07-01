@@ -53,6 +53,7 @@ const els = {
   screenButton: document.querySelector("#screenButton"),
   audioDeviceSelect: document.querySelector("#audioDeviceSelect"),
   videoDeviceSelect: document.querySelector("#videoDeviceSelect"),
+  outputDeviceSelect: document.querySelector("#outputDeviceSelect"),
   videoGrid: document.querySelector("#videoGrid"),
   swatches: document.querySelectorAll(".swatch")
 };
@@ -78,6 +79,7 @@ const state = {
   cameraEnabled: false,
   audioDeviceId: localStorage.getItem("kolinkAudioDeviceId") || "",
   videoDeviceId: localStorage.getItem("kolinkVideoDeviceId") || "",
+  outputDeviceId: localStorage.getItem("kolinkOutputDeviceId") || "",
   iceServers: [{ urls: "stun:stun.l.google.com:19302" }]
 };
 
@@ -280,6 +282,12 @@ els.audioDeviceSelect.addEventListener("change", () => {
 els.videoDeviceSelect.addEventListener("change", () => {
   state.videoDeviceId = els.videoDeviceSelect.value;
   localStorage.setItem("kolinkVideoDeviceId", state.videoDeviceId);
+});
+
+els.outputDeviceSelect.addEventListener("change", () => {
+  state.outputDeviceId = els.outputDeviceSelect.value;
+  localStorage.setItem("kolinkOutputDeviceId", state.outputDeviceId);
+  applyOutputDevice();
 });
 
 els.screenButton.addEventListener("click", () => {
@@ -669,6 +677,8 @@ async function refreshMediaDevices() {
   if (!navigator.mediaDevices?.enumerateDevices) {
     renderDeviceOptions(els.audioDeviceSelect, [], state.audioDeviceId, "Микрофон");
     renderDeviceOptions(els.videoDeviceSelect, [], state.videoDeviceId, "Камера");
+    renderDeviceOptions(els.outputDeviceSelect, [], state.outputDeviceId, "Динамики");
+    updateOutputDeviceSupport();
     return;
   }
 
@@ -676,10 +686,15 @@ async function refreshMediaDevices() {
     const devices = await navigator.mediaDevices.enumerateDevices();
     const audioInputs = devices.filter((device) => device.kind === "audioinput");
     const videoInputs = devices.filter((device) => device.kind === "videoinput");
+    const audioOutputs = devices.filter((device) => device.kind === "audiooutput");
     state.audioDeviceId = normalizeSelectedDevice(state.audioDeviceId, audioInputs);
     state.videoDeviceId = normalizeSelectedDevice(state.videoDeviceId, videoInputs);
+    state.outputDeviceId = normalizeSelectedDevice(state.outputDeviceId, audioOutputs);
     renderDeviceOptions(els.audioDeviceSelect, audioInputs, state.audioDeviceId, "Микрофон");
     renderDeviceOptions(els.videoDeviceSelect, videoInputs, state.videoDeviceId, "Камера");
+    renderDeviceOptions(els.outputDeviceSelect, audioOutputs, state.outputDeviceId, "Динамики");
+    updateOutputDeviceSupport();
+    applyOutputDevice();
   } catch (error) {
     console.warn(error);
   }
@@ -706,9 +721,35 @@ function renderDeviceOptions(select, devices, selectedId, fallbackLabel) {
   });
 }
 
+function canSelectOutputDevice() {
+  return typeof HTMLMediaElement !== "undefined" && "setSinkId" in HTMLMediaElement.prototype;
+}
+
+function updateOutputDeviceSupport() {
+  els.outputDeviceSelect.disabled = !canSelectOutputDevice();
+  els.outputDeviceSelect.title = canSelectOutputDevice()
+    ? "Выберите устройство вывода звука"
+    : "Браузер не поддерживает выбор устройства вывода";
+}
+
+function applyOutputDevice() {
+  document.querySelectorAll(".video-tile audio").forEach((audio) => setAudioOutput(audio));
+}
+
+async function setAudioOutput(audio) {
+  if (!audio || !canSelectOutputDevice()) return;
+
+  try {
+    await audio.setSinkId(state.outputDeviceId || "");
+  } catch (error) {
+    console.warn(error);
+  }
+}
+
 function setDeviceControlsDisabled(disabled) {
   els.audioDeviceSelect.disabled = disabled;
   els.videoDeviceSelect.disabled = disabled;
+  updateOutputDeviceSupport();
 }
 
 async function startScreenShare() {
@@ -1102,6 +1143,7 @@ function addVideoTile(id, stream, label) {
   const audio = tile.querySelector("audio");
   audio.srcObject = new MediaStream(id === state.selfId ? [] : stream?.getAudioTracks() || []);
   audio.muted = id === state.selfId;
+  setAudioOutput(audio);
   audio.play?.().catch(() => {});
   tile.querySelector(".audio-only-tile").hidden = hasVideo;
   tile.querySelector(".video-label").textContent = label;

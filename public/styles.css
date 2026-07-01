@@ -535,7 +535,7 @@ select {
 
 .device-controls {
   display: grid;
-  grid-template-columns: minmax(160px, 220px) minmax(160px, 220px);
+  grid-template-columns: repeat(3, minmax(140px, 200px));
   gap: 10px;
   min-width: 0;
 }
