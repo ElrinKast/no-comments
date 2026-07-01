@@ -642,7 +642,8 @@ video {
 
 .video-label,
 .voice-label,
-.connection-label {
+.connection-label,
+.fullscreen-button {
   position: absolute;
   max-width: calc(100% - 20px);
   overflow: hidden;
@@ -655,9 +656,28 @@ video {
   white-space: nowrap;
 }
 
+.fullscreen-button {
+  right: 10px;
+  bottom: 10px;
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.58);
+  font-size: 17px;
+  line-height: 1;
+}
+
+.fullscreen-button:hover,
+.fullscreen-button:focus-visible {
+  background: rgba(79, 140, 255, 0.82);
+}
+
 .video-label {
   left: 10px;
   bottom: 10px;
+  max-width: calc(100% - 64px);
 }
 
 .voice-label {
@@ -691,6 +711,21 @@ video {
 
 .connection-label[data-tone="warn"] {
   background: rgba(226, 85, 85, 0.82);
+}
+
+.video-tile:fullscreen,
+.video-tile:-webkit-full-screen {
+  width: 100vw;
+  height: 100vh;
+  border: 0;
+  border-radius: 0;
+  background: #000;
+}
+
+.video-tile:fullscreen video,
+.video-tile:-webkit-full-screen video {
+  height: 100vh;
+  object-fit: contain;
 }
 
 .chat-panel {

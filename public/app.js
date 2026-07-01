@@ -919,6 +919,9 @@ async function updateConnectionDiagnostics() {
       const hasNewBytes = bytesReceived > previous.bytesReceived;
       const lastBytesAt = hasNewBytes ? performance.now() : previous.lastBytesAt;
       const relay = local?.candidateType === "relay" || remote?.candidateType === "relay";
+      const rttMs = typeof pair?.currentRoundTripTime === "number"
+        ? Math.max(1, Math.round(pair.currentRoundTripTime * 1000))
+        : null;
       const isFailed = peer.connectionState === "failed" || peer.iceConnectionState === "failed";
       const isDisconnected = peer.connectionState === "disconnected" || peer.iceConnectionState === "disconnected";
       const isConnecting = ["new", "connecting"].includes(peer.connectionState)
@@ -938,10 +941,11 @@ async function updateConnectionDiagnostics() {
                 ? "через сервер"
                 : "прямое соединение";
       const next = {
-        label,
+        label: rttMs && !unstable && !isConnecting ? `${label} · ${rttMs} мс` : label,
         tone: unstable ? "warn" : relay ? "relay" : isConnecting ? "pending" : "ok",
         bytesReceived,
-        lastBytesAt
+        lastBytesAt,
+        rttMs
       };
 
       state.connectionStates.set(id, next);
@@ -1338,7 +1342,12 @@ function addVideoTile(id, stream, label) {
     tile = document.createElement("article");
     tile.className = "video-tile";
     tile.dataset.videoId = id;
-    tile.innerHTML = `<video autoplay playsinline></video><audio autoplay playsinline></audio><div class="audio-only-tile">VOICE</div><span class="video-label"></span><span class="voice-label"></span><span class="connection-label"></span>`;
+    tile.innerHTML = `<video autoplay playsinline></video><audio autoplay playsinline></audio><div class="audio-only-tile">VOICE</div><button class="fullscreen-button" type="button" title="Открыть на весь экран">⛶</button><span class="video-label"></span><span class="voice-label"></span><span class="connection-label"></span>`;
+    tile.querySelector(".fullscreen-button").addEventListener("click", (event) => {
+      event.stopPropagation();
+      openTileFullscreen(tile);
+    });
+    tile.addEventListener("dblclick", () => openTileFullscreen(tile));
     els.videoGrid.append(tile);
   }
 
@@ -1353,8 +1362,28 @@ function addVideoTile(id, stream, label) {
   setAudioOutput(audio);
   audio.play?.().catch(() => {});
   tile.querySelector(".audio-only-tile").hidden = hasVideo;
+  tile.querySelector(".fullscreen-button").hidden = !hasVideo;
   tile.querySelector(".video-label").textContent = label;
   updateParticipantIndicators(id);
+}
+
+async function openTileFullscreen(tile) {
+  const video = tile.querySelector("video");
+  try {
+    if (tile.requestFullscreen) {
+      await tile.requestFullscreen();
+      return;
+    }
+    if (tile.webkitRequestFullscreen) {
+      tile.webkitRequestFullscreen();
+      return;
+    }
+    if (video?.webkitEnterFullscreen) {
+      video.webkitEnterFullscreen();
+    }
+  } catch {
+    addNotice("Не удалось открыть видео на весь экран. Попробуйте нажать на само видео.");
+  }
 }
 
 function hasDisplayableVideo(id, stream) {
