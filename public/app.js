@@ -51,10 +51,16 @@ const els = {
   muteButton: document.querySelector("#muteButton"),
   cameraButton: document.querySelector("#cameraButton"),
   screenButton: document.querySelector("#screenButton"),
+  diagnosticsButton: document.querySelector("#diagnosticsButton"),
+  reconnectCallButton: document.querySelector("#reconnectCallButton"),
   audioDeviceSelect: document.querySelector("#audioDeviceSelect"),
   videoDeviceSelect: document.querySelector("#videoDeviceSelect"),
   outputDeviceSelect: document.querySelector("#outputDeviceSelect"),
   videoGrid: document.querySelector("#videoGrid"),
+  diagnosticsModal: document.querySelector("#diagnosticsModal"),
+  diagnosticsCloseButton: document.querySelector("#diagnosticsCloseButton"),
+  diagnosticsList: document.querySelector("#diagnosticsList"),
+  runDiagnosticsButton: document.querySelector("#runDiagnosticsButton"),
   swatches: document.querySelectorAll(".swatch")
 };
 
@@ -307,6 +313,14 @@ els.screenButton.addEventListener("click", () => {
   }
 });
 
+els.reconnectCallButton.addEventListener("click", reconnectCall);
+els.diagnosticsButton.addEventListener("click", openDiagnosticsModal);
+els.diagnosticsCloseButton.addEventListener("click", closeDiagnosticsModal);
+els.runDiagnosticsButton.addEventListener("click", runDiagnostics);
+els.diagnosticsModal.addEventListener("click", (event) => {
+  if (event.target === els.diagnosticsModal) closeDiagnosticsModal();
+});
+
 async function boot() {
   if (!state.token) return;
 
@@ -431,6 +445,92 @@ async function api(path, options = {}) {
   const data = await response.json().catch(() => ({}));
   if (!response.ok) return { error: data.error || "Ошибка запроса." };
   return data;
+}
+
+function openDiagnosticsModal() {
+  els.diagnosticsModal.hidden = false;
+  runDiagnostics();
+}
+
+function closeDiagnosticsModal() {
+  els.diagnosticsModal.hidden = true;
+}
+
+async function runDiagnostics() {
+  els.diagnosticsList.innerHTML = `<div class="diagnostic-row pending"><strong>Проверяем...</strong><span>Собираем состояние сайта, realtime и TURN.</span></div>`;
+  const checks = await Promise.allSettled([
+    checkHttpHealth(),
+    Promise.resolve(checkSocketState()),
+    checkTurnConfig(),
+    checkAppDiagnostics()
+  ]);
+  const rows = checks.map((result) => {
+    return result.status === "fulfilled"
+      ? result.value
+      : { status: "bad", title: "Проверка", detail: "Проверка не завершилась. Обновите страницу и попробуйте снова." };
+  });
+
+  els.diagnosticsList.replaceChildren(...rows.map(renderDiagnosticRow));
+}
+
+async function checkHttpHealth() {
+  const started = performance.now();
+  try {
+    const response = await fetch(`/health?ts=${Date.now()}`, { cache: "no-store" });
+    const data = await response.json().catch(() => ({}));
+    return {
+      status: response.ok && data.ok ? "ok" : "warn",
+      title: "Сайт",
+      detail: response.ok ? `HTTP работает · ${Math.round(performance.now() - started)} мс` : `HTTP ответил ${response.status}`
+    };
+  } catch {
+    return { status: "bad", title: "Сайт", detail: "Браузер не может открыть /health. Проблема в сети, DNS или HTTPS." };
+  }
+}
+
+function checkSocketState() {
+  if (socket?.connected) {
+    return { status: "ok", title: "Realtime", detail: `WebSocket подключен · id ${socket.id}` };
+  }
+  return { status: "bad", title: "Realtime", detail: "WebSocket не подключен. Онлайн, сообщения и звонки будут работать нестабильно." };
+}
+
+async function checkTurnConfig() {
+  try {
+    const response = await fetch(`/config.json?ts=${Date.now()}`, { cache: "no-store" });
+    const config = await response.json();
+    const urls = (config.iceServers || []).flatMap((server) => Array.isArray(server.urls) ? server.urls : [server.urls]).filter(Boolean);
+    const turnUrls = urls.filter((url) => String(url).startsWith("turn:"));
+    return {
+      status: turnUrls.length ? "ok" : "warn",
+      title: "TURN",
+      detail: turnUrls.length ? `Настроен: ${turnUrls.join(", ")}` : "TURN не найден в конфиге. Через сложные сети звонки могут не пройти."
+    };
+  } catch {
+    return { status: "bad", title: "TURN", detail: "Не удалось получить /config.json." };
+  }
+}
+
+async function checkAppDiagnostics() {
+  try {
+    const response = await api(`/api/diagnostics?channelId=${encodeURIComponent(state.channelId)}`);
+    if (response.error) return { status: "warn", title: "Канал", detail: response.error };
+
+    return {
+      status: "ok",
+      title: "Канал",
+      detail: `Онлайн: ${response.onlineCount}, в звонке: ${response.callCount}, сервер жив ${response.uptime} сек.`
+    };
+  } catch {
+    return { status: "bad", title: "Канал", detail: "API диагностики не ответил." };
+  }
+}
+
+function renderDiagnosticRow(item) {
+  const row = document.createElement("div");
+  row.className = `diagnostic-row ${item.status}`;
+  row.innerHTML = `<strong>${escapeHtml(item.title)}</strong><span>${escapeHtml(item.detail)}</span>`;
+  return row;
 }
 
 function connectSocket() {
@@ -582,6 +682,7 @@ async function joinCall() {
     state.localStream = media.stream;
     state.inCall = true;
     state.cameraEnabled = media.video;
+    els.reconnectCallButton.hidden = false;
     setLocalCameraEnabled(state.cameraEnabled);
     addVideoTile(state.selfId, state.localStream, media.video ? "Вы" : "Вы · только голос");
     startVoiceActivity(state.selfId, state.localStream);
@@ -692,6 +793,7 @@ function leaveCall() {
   state.inCall = false;
   state.muted = false;
   state.cameraEnabled = false;
+  els.reconnectCallButton.hidden = true;
   stopCallDiagnostics();
   els.callButton.textContent = "Позвонить";
   els.callButton.classList.remove("active");
@@ -703,6 +805,42 @@ function leaveCall() {
   for (const id of [...state.peers.keys()]) removePeer(id);
   document.querySelector(`[data-video-id="${CSS.escape(state.selfId)}"]`)?.remove();
   renderVideoEmptyState();
+}
+
+async function reconnectCall() {
+  if (!state.inCall) return;
+
+  const wasMuted = state.muted;
+  const wasSharingScreen = Boolean(state.screenStream);
+  els.reconnectCallButton.disabled = true;
+  addNotice("Переподключаем звонок...");
+
+  socket?.emit("call:leave");
+  await stopScreenShare({ renegotiate: false });
+  state.localStream?.getTracks().forEach((track) => track.stop());
+  state.localStream = null;
+  stopCallDiagnostics();
+  for (const id of [...state.peers.keys()]) removePeer(id);
+  document.querySelector(`[data-video-id="${CSS.escape(state.selfId)}"]`)?.remove();
+  renderVideoEmptyState();
+
+  state.inCall = false;
+  state.muted = wasMuted;
+  state.cameraEnabled = false;
+
+  try {
+    await joinCall();
+    if (state.muted) {
+      for (const track of state.localStream?.getAudioTracks() || []) track.enabled = false;
+      els.muteButton.classList.add("active");
+      els.muteButton.textContent = "muted";
+      updateVoiceState(state.selfId, false);
+      updateParticipantIndicators(state.selfId);
+    }
+    if (wasSharingScreen) addNotice("Демонстрацию экрана после переподключения нужно включить заново.");
+  } finally {
+    els.reconnectCallButton.disabled = false;
+  }
 }
 
 function selectedDeviceConstraints(kind) {

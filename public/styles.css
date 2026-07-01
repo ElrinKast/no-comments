@@ -323,6 +323,68 @@ select {
   box-shadow: var(--shadow);
 }
 
+.diagnostics-modal {
+  display: grid;
+  gap: 16px;
+  width: min(620px, 100%);
+  max-height: min(720px, calc(100vh - 48px));
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 20px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+}
+
+.diagnostics-list {
+  display: grid;
+  gap: 10px;
+}
+
+.diagnostic-row {
+  display: grid;
+  gap: 4px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  background: #151820;
+}
+
+.diagnostic-row span {
+  overflow-wrap: anywhere;
+  color: var(--muted);
+}
+
+.diagnostic-row.ok {
+  border-color: rgba(34, 160, 107, 0.45);
+}
+
+.diagnostic-row.warn,
+.diagnostic-row.pending {
+  border-color: rgba(246, 174, 69, 0.5);
+}
+
+.diagnostic-row.bad {
+  border-color: rgba(226, 85, 85, 0.55);
+}
+
+.diagnostics-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+
+.diagnostics-actions button,
+.diagnostics-actions a {
+  border-radius: 8px;
+  padding: 11px 14px;
+  background: var(--panel-strong);
+  color: var(--text);
+  font-weight: 800;
+  text-decoration: none;
+}
+
 .settings-nav {
   display: grid;
   align-content: start;
@@ -542,6 +604,10 @@ select {
   display: flex;
   gap: 10px;
   align-items: center;
+}
+
+.reconnect-button {
+  background: #2b3140;
 }
 
 .device-controls {

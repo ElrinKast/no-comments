@@ -231,6 +231,15 @@ function requireAuth(req, res, next) {
 function attachApi(app) {
   app.use(express.json({ limit: "64kb" }));
 
+  app.get("/health", (_req, res) => {
+    res.json({
+      ok: true,
+      service: "kolink",
+      uptime: Math.round(process.uptime()),
+      timestamp: new Date().toISOString()
+    });
+  });
+
   app.get("/config.json", (_req, res) => {
     res.json({
       iceServers: iceServers()
@@ -316,6 +325,28 @@ function attachApi(app) {
     const requestedChannel = String(req.query.channelId || DEFAULT_CHANNEL_ID).trim();
     const channelId = (await channelExists(requestedChannel)) ? requestedChannel : DEFAULT_CHANNEL_ID;
     res.json({ users: channelUsers(channelId) });
+  });
+
+  app.get("/api/diagnostics", requireAuth, async (req, res) => {
+    const requestedChannel = String(req.query.channelId || DEFAULT_CHANNEL_ID).trim();
+    const channelId = (await channelExists(requestedChannel)) ? requestedChannel : DEFAULT_CHANNEL_ID;
+    const users = channelUsers(channelId);
+    const configuredIceServers = iceServers();
+    const turnUrls = configuredIceServers.flatMap((server) => Array.isArray(server.urls) ? server.urls : [server.urls])
+      .filter((url) => String(url || "").startsWith("turn:"));
+
+    res.json({
+      ok: true,
+      user: publicUser(req.user),
+      channelId,
+      onlineCount: users.length,
+      callCount: users.filter((user) => user.inCall).length,
+      turnConfigured: turnUrls.length > 0,
+      turnUrls,
+      socketConnected: true,
+      serverTime: new Date().toISOString(),
+      uptime: Math.round(process.uptime())
+    });
   });
 }
 

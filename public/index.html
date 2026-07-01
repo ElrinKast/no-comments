@@ -122,6 +122,8 @@
             </label>
           </div>
           <div class="call-actions">
+            <button id="diagnosticsButton" class="icon-button" type="button" title="Диагностика">diag</button>
+            <button id="reconnectCallButton" class="icon-button reconnect-button" type="button" title="Переподключиться к звонку" hidden>re</button>
             <button id="muteButton" class="icon-button" type="button" title="Микрофон">mic</button>
             <button id="cameraButton" class="icon-button" type="button" title="Камера">cam</button>
             <button id="screenButton" class="icon-button" type="button" title="Демонстрация экрана">screen</button>
@@ -147,6 +149,25 @@
         </section>
       </section>
     </main>
+
+    <div id="diagnosticsModal" class="modal-backdrop" hidden>
+      <section class="diagnostics-modal" role="dialog" aria-modal="true" aria-labelledby="diagnosticsTitle">
+        <header class="settings-header">
+          <div>
+            <p class="eyebrow">Kolink</p>
+            <h2 id="diagnosticsTitle">Диагностика соединения</h2>
+          </div>
+          <button id="diagnosticsCloseButton" class="icon-button" type="button" title="Закрыть">x</button>
+        </header>
+
+        <div id="diagnosticsList" class="diagnostics-list"></div>
+
+        <div class="diagnostics-actions">
+          <button id="runDiagnosticsButton" type="button">Проверить снова</button>
+          <a href="/health" target="_blank" rel="noreferrer">Открыть /health</a>
+        </div>
+      </section>
+    </div>
 
     <div id="accountModal" class="modal-backdrop" hidden>
       <section class="settings-modal" role="dialog" aria-modal="true" aria-labelledby="accountModalTitle">
@@ -219,7 +240,7 @@
     </div>
 
     <script src="/socket.io/socket.io.js"></script>
-    <script src="/app.js?v=20260702-fullscreen" type="module"></script>
+    <script src="/app.js?v=20260702-home-diagnostics" type="module"></script>
   </body>
 </html>
 
