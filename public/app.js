@@ -670,6 +670,16 @@ function leaveCall() {
 
 function selectedDeviceConstraints(kind) {
   const deviceId = kind === "audio" ? state.audioDeviceId : state.videoDeviceId;
+  if (kind === "audio") {
+    return {
+      echoCancellation: true,
+      noiseSuppression: true,
+      autoGainControl: true,
+      channelCount: 1,
+      ...(deviceId ? { deviceId: { exact: deviceId } } : {})
+    };
+  }
+
   return deviceId ? { deviceId: { exact: deviceId } } : true;
 }
 
