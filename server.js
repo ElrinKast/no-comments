@@ -411,10 +411,6 @@ function attachRealtime(io) {
       socket.to(to).emit("signal:ice", { from: socket.id, candidate });
     });
 
-    socket.on("signal:renegotiate", ({ to }) => {
-      socket.to(to).emit("signal:renegotiate", { from: socket.id });
-    });
-
     socket.on("disconnect", () => {
       const member = socket.data.member;
       if (!member) return;
