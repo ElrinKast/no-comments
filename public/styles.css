@@ -685,6 +685,10 @@ video {
   background: rgba(79, 140, 255, 0.72);
 }
 
+.connection-label[data-tone="pending"] {
+  background: rgba(246, 174, 69, 0.78);
+}
+
 .connection-label[data-tone="warn"] {
   background: rgba(226, 85, 85, 0.82);
 }

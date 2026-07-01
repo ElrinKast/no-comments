@@ -894,12 +894,27 @@ async function updateConnectionDiagnostics() {
       const hasNewBytes = bytesReceived > previous.bytesReceived;
       const lastBytesAt = hasNewBytes ? performance.now() : previous.lastBytesAt;
       const relay = local?.candidateType === "relay" || remote?.candidateType === "relay";
-      const unstable = ["failed", "disconnected"].includes(peer.connectionState)
-        || ["failed", "disconnected"].includes(peer.iceConnectionState)
-        || performance.now() - lastBytesAt > 7000;
+      const isFailed = peer.connectionState === "failed" || peer.iceConnectionState === "failed";
+      const isDisconnected = peer.connectionState === "disconnected" || peer.iceConnectionState === "disconnected";
+      const isConnecting = ["new", "connecting"].includes(peer.connectionState)
+        || ["new", "checking"].includes(peer.iceConnectionState)
+        || !pair;
+      const noIncomingData = !isConnecting && performance.now() - lastBytesAt > 7000;
+      const unstable = isFailed || isDisconnected || noIncomingData;
+      const label = isFailed
+        ? "соединение потеряно"
+        : isDisconnected
+          ? "переподключение"
+          : noIncomingData
+            ? "нет входящих данных"
+            : isConnecting
+              ? "подключение"
+              : relay
+                ? "через сервер"
+                : "прямое соединение";
       const next = {
-        label: unstable ? "нестабильно" : relay ? "relay" : "соединение",
-        tone: unstable ? "warn" : relay ? "relay" : "ok",
+        label,
+        tone: unstable ? "warn" : relay ? "relay" : isConnecting ? "pending" : "ok",
         bytesReceived,
         lastBytesAt
       };
@@ -908,7 +923,7 @@ async function updateConnectionDiagnostics() {
       updateParticipantIndicators(id);
       if (unstable && !state.connectionWarnings.has(id)) {
         state.connectionWarnings.add(id);
-        addNotice("Соединение нестабильно: если звук или видео пропали, обновите страницу и проверьте TURN/порты.");
+        addNotice(`${label}: если звук или видео пропали, обновите страницу и проверьте устройство, сеть и TURN/порты.`);
       }
     })
   );
