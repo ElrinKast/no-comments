@@ -51,6 +51,8 @@ const els = {
   muteButton: document.querySelector("#muteButton"),
   cameraButton: document.querySelector("#cameraButton"),
   screenButton: document.querySelector("#screenButton"),
+  audioDeviceSelect: document.querySelector("#audioDeviceSelect"),
+  videoDeviceSelect: document.querySelector("#videoDeviceSelect"),
   videoGrid: document.querySelector("#videoGrid"),
   swatches: document.querySelectorAll(".swatch")
 };
@@ -74,12 +76,16 @@ const state = {
   inCall: false,
   muted: false,
   cameraEnabled: false,
+  audioDeviceId: localStorage.getItem("kolinkAudioDeviceId") || "",
+  videoDeviceId: localStorage.getItem("kolinkVideoDeviceId") || "",
   iceServers: [{ urls: "stun:stun.l.google.com:19302" }]
 };
 
 loadConfig();
 setupScreenShareSupport();
 updateCameraButton();
+refreshMediaDevices();
+navigator.mediaDevices?.addEventListener?.("devicechange", refreshMediaDevices);
 boot();
 
 els.loginTab.addEventListener("click", () => setAuthMode("login"));
@@ -266,6 +272,16 @@ els.cameraButton.addEventListener("click", () => {
   toggleCamera();
 });
 
+els.audioDeviceSelect.addEventListener("change", () => {
+  state.audioDeviceId = els.audioDeviceSelect.value;
+  localStorage.setItem("kolinkAudioDeviceId", state.audioDeviceId);
+});
+
+els.videoDeviceSelect.addEventListener("change", () => {
+  state.videoDeviceId = els.videoDeviceSelect.value;
+  localStorage.setItem("kolinkVideoDeviceId", state.videoDeviceId);
+});
+
 els.screenButton.addEventListener("click", () => {
   if (state.screenStream) {
     stopScreenShare();
@@ -302,6 +318,7 @@ async function enterApp() {
     renderChannels();
   }
 
+  await refreshMediaDevices();
   connectSocket();
   joinChannel(state.channelId);
   startPresencePolling();
@@ -528,6 +545,7 @@ async function joinCall() {
     socket.emit("call:join", { cameraOn: state.cameraEnabled, sharingScreen: false });
     els.callButton.textContent = "Выйти";
     els.callButton.classList.add("active");
+    setDeviceControlsDisabled(true);
     updateCameraButton();
     if (!media.video) addNotice("Камера недоступна, вы вошли в звонок с микрофоном.");
 
@@ -540,12 +558,17 @@ async function joinCall() {
 }
 
 async function getCallMedia() {
+  const audio = selectedDeviceConstraints("audio");
+  const video = selectedDeviceConstraints("video");
+
   try {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
+    const stream = await navigator.mediaDevices.getUserMedia({ audio, video });
+    await refreshMediaDevices();
     return { stream, video: true };
   } catch (cameraError) {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+      const stream = await navigator.mediaDevices.getUserMedia({ audio, video: false });
+      await refreshMediaDevices();
       return { stream, video: false };
     } catch (audioError) {
       throw audioError?.name ? audioError : cameraError;
@@ -629,11 +652,63 @@ function leaveCall() {
   els.callButton.classList.remove("active");
   els.muteButton.classList.remove("active");
   els.muteButton.textContent = "mic";
+  setDeviceControlsDisabled(false);
   updateCameraButton();
 
   for (const id of [...state.peers.keys()]) removePeer(id);
   document.querySelector(`[data-video-id="${CSS.escape(state.selfId)}"]`)?.remove();
   renderVideoEmptyState();
+}
+
+function selectedDeviceConstraints(kind) {
+  const deviceId = kind === "audio" ? state.audioDeviceId : state.videoDeviceId;
+  return deviceId ? { deviceId: { exact: deviceId } } : true;
+}
+
+async function refreshMediaDevices() {
+  if (!navigator.mediaDevices?.enumerateDevices) {
+    renderDeviceOptions(els.audioDeviceSelect, [], state.audioDeviceId, "Микрофон");
+    renderDeviceOptions(els.videoDeviceSelect, [], state.videoDeviceId, "Камера");
+    return;
+  }
+
+  try {
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    const audioInputs = devices.filter((device) => device.kind === "audioinput");
+    const videoInputs = devices.filter((device) => device.kind === "videoinput");
+    state.audioDeviceId = normalizeSelectedDevice(state.audioDeviceId, audioInputs);
+    state.videoDeviceId = normalizeSelectedDevice(state.videoDeviceId, videoInputs);
+    renderDeviceOptions(els.audioDeviceSelect, audioInputs, state.audioDeviceId, "Микрофон");
+    renderDeviceOptions(els.videoDeviceSelect, videoInputs, state.videoDeviceId, "Камера");
+  } catch (error) {
+    console.warn(error);
+  }
+}
+
+function normalizeSelectedDevice(selectedId, devices) {
+  return devices.some((device) => device.deviceId === selectedId) ? selectedId : "";
+}
+
+function renderDeviceOptions(select, devices, selectedId, fallbackLabel) {
+  select.replaceChildren();
+
+  const defaultOption = document.createElement("option");
+  defaultOption.value = "";
+  defaultOption.textContent = `${fallbackLabel}: по умолчанию`;
+  select.append(defaultOption);
+
+  devices.forEach((device, index) => {
+    const option = document.createElement("option");
+    option.value = device.deviceId;
+    option.textContent = device.label || `${fallbackLabel} ${index + 1}`;
+    option.selected = device.deviceId === selectedId;
+    select.append(option);
+  });
+}
+
+function setDeviceControlsDisabled(disabled) {
+  els.audioDeviceSelect.disabled = disabled;
+  els.videoDeviceSelect.disabled = disabled;
 }
 
 async function startScreenShare() {
