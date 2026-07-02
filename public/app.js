@@ -362,7 +362,7 @@ async function enterApp() {
   await refreshMediaDevices();
   els.authScreen.hidden = true;
   els.appShell.hidden = false;
-  connectSocket();
+  await connectSocket();
   joinChannel(state.channelId);
   startPresencePolling();
 }
@@ -554,9 +554,21 @@ function renderDiagnosticRow(item) {
   return row;
 }
 
-function connectSocket() {
+async function waitForSocketIo() {
+  if (typeof window.io === "function") return window.io;
+
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    await new Promise((resolve) => window.setTimeout(resolve, 100));
+    if (typeof window.io === "function") return window.io;
+  }
+
+  throw new Error("Socket.IO не загрузился. Проверьте сеть или обновите страницу.");
+}
+
+async function connectSocket() {
+  const socketFactory = await waitForSocketIo();
   socket?.disconnect();
-  socket = io({ auth: { token: state.token } });
+  socket = socketFactory({ auth: { token: state.token } });
 
   socket.on("connect", () => {
     if (state.user && !els.appShell.hidden && state.selfId) {
