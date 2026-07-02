@@ -103,6 +103,14 @@ refreshMediaDevices();
 navigator.mediaDevices?.addEventListener?.("devicechange", refreshMediaDevices);
 boot();
 
+window.addEventListener("error", (event) => {
+  showStartupError(event.error || event.message);
+});
+
+window.addEventListener("unhandledrejection", (event) => {
+  showStartupError(event.reason);
+});
+
 els.loginTab.addEventListener("click", () => setAuthMode("login"));
 els.registerTab.addEventListener("click", () => setAuthMode("register"));
 
@@ -324,20 +332,22 @@ els.diagnosticsModal.addEventListener("click", (event) => {
 async function boot() {
   if (!state.token) return;
 
-  const response = await api("/api/me");
-  if (response.error) {
-    localStorage.removeItem("kolinkToken");
-    localStorage.removeItem("noCommentsToken");
-    return;
-  }
+  try {
+    const response = await api("/api/me");
+    if (response.error) {
+      clearSession();
+      return;
+    }
 
-  state.user = response.user;
-  await enterApp();
+    state.user = response.user;
+    await enterApp();
+  } catch (error) {
+    clearSession();
+    showStartupError(error);
+  }
 }
 
 async function enterApp() {
-  els.authScreen.hidden = true;
-  els.appShell.hidden = false;
   hydrateProfile();
 
   const workspace = await api("/api/workspace");
@@ -350,9 +360,20 @@ async function enterApp() {
   }
 
   await refreshMediaDevices();
+  els.authScreen.hidden = true;
+  els.appShell.hidden = false;
   connectSocket();
   joinChannel(state.channelId);
   startPresencePolling();
+}
+
+function showStartupError(error) {
+  const message = error?.message || String(error || "Неизвестная ошибка");
+  console.error(error);
+  if (!els.appShell.hidden) return;
+  els.appShell.hidden = true;
+  els.authScreen.hidden = false;
+  els.authError.textContent = `Не удалось загрузить приложение. Обновите страницу или войдите заново. ${message}`;
 }
 
 function setSession(token, user) {
